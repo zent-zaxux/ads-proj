@@ -1,6 +1,7 @@
 package com.umu.ads_proj.service;
 
 import com.umu.ads_proj.entity.User;
+import com.umu.ads_proj.event.PerformanceEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -29,12 +30,19 @@ public class LoadGenerationService {
     @Autowired
     private RestTemplate restTemplate;
     
+    @Autowired
+    private EventPublisherService eventPublisher;
+    
     /**
      * Generate concurrent load by creating multiple users
      */
     @Async
     public CompletableFuture<String> generateCreateUserLoad(int numberOfUsers, int concurrencyLevel) {
         logger.info("Starting load generation: {} users with concurrency {}", numberOfUsers, concurrencyLevel);
+        
+        // Publish load test start event
+        PerformanceEvent startEvent = PerformanceEvent.loadTestStarted("USER_CREATION", numberOfUsers, concurrencyLevel);
+        eventPublisher.publishPerformanceEvent(startEvent);
         
         List<CompletableFuture<Void>> tasks = new ArrayList<>();
         long startTime = System.currentTimeMillis();
@@ -66,9 +74,14 @@ public class LoadGenerationService {
         long endTime = System.currentTimeMillis();
         long duration = endTime - startTime;
         
+        double throughput = (numberOfUsers * 1000.0) / duration;
         String result = String.format("Load generation completed: %d users created in %d ms (%.2f users/sec)", 
-                                    numberOfUsers, duration, (numberOfUsers * 1000.0) / duration);
+                                    numberOfUsers, duration, throughput);
         logger.info(result);
+        
+        // Publish load test completion event
+        PerformanceEvent completionEvent = PerformanceEvent.loadTestCompleted("USER_CREATION", numberOfUsers, duration, throughput);
+        eventPublisher.publishPerformanceEvent(completionEvent);
         
         return CompletableFuture.completedFuture(result);
     }

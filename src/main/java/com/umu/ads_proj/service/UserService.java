@@ -1,6 +1,7 @@
 package com.umu.ads_proj.service;
 
 import com.umu.ads_proj.entity.User;
+import com.umu.ads_proj.event.UserEvent;
 import com.umu.ads_proj.repository.UserRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,6 +23,9 @@ public class UserService {
     @Autowired
     private UserRepository userRepository;
     
+    @Autowired
+    private EventPublisherService eventPublisher;
+    
     /**
      * Create a new user
      */
@@ -41,6 +45,11 @@ public class UserService {
         
         User savedUser = userRepository.save(user);
         logger.info("User created successfully with ID: {}", savedUser.getId());
+        
+        // Publish user creation event to Kafka
+        UserEvent userEvent = UserEvent.userCreated(savedUser.getId(), savedUser.getName(), savedUser.getEmail());
+        eventPublisher.publishUserEvent(userEvent);
+        
         return savedUser;
     }
     
@@ -102,6 +111,11 @@ public class UserService {
         
         User savedUser = userRepository.save(existingUser);
         logger.info("User updated successfully with ID: {}", savedUser.getId());
+        
+        // Publish user update event to Kafka
+        UserEvent userEvent = UserEvent.userUpdated(savedUser.getId(), savedUser.getName(), savedUser.getEmail());
+        eventPublisher.publishUserEvent(userEvent);
+        
         return savedUser;
     }
     
@@ -111,13 +125,20 @@ public class UserService {
     public void deleteUser(Long id) {
         logger.info("Deleting user with ID: {}", id);
         
-        if (!userRepository.existsById(id)) {
+        // Get user info before deletion for event publishing
+        Optional<User> userToDelete = userRepository.findById(id);
+        if (userToDelete.isEmpty()) {
             logger.warn("User with ID {} not found for deletion", id);
             throw new IllegalArgumentException("User with ID " + id + " not found");
         }
         
+        User user = userToDelete.get();
         userRepository.deleteById(id);
         logger.info("User deleted successfully with ID: {}", id);
+        
+        // Publish user deletion event to Kafka
+        UserEvent userEvent = UserEvent.userDeleted(user.getId(), user.getName(), user.getEmail());
+        eventPublisher.publishUserEvent(userEvent);
     }
     
     /**
