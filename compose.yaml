@@ -1,0 +1,10 @@
+services:
+  postgres:
+    image: 'postgres:latest'
+    container_name: ads-proj-postgres  
+    environment:
+      - 'POSTGRES_DB=ads-proj-db'
+      - 'POSTGRES_PASSWORD=password'
+      - 'POSTGRES_USER=zent'
+    ports:
+      - '5432:5432'
