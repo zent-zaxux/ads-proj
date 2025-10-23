@@ -1,6 +1,7 @@
 package com.umu.ads_proj.service;
 
 import com.umu.ads_proj.event.BaseEvent;
+import com.umu.ads_proj.event.OrderEvent;
 import com.umu.ads_proj.event.PerformanceEvent;
 import com.umu.ads_proj.event.UserEvent;
 import org.slf4j.Logger;
@@ -33,6 +34,9 @@ public class EventPublisherService {
     @Value("${app.kafka.topics.performance-events}")
     private String performanceEventsTopic;
     
+    @Value("${app.kafka.topics.order-events}")
+    private String orderEventsTopic;
+    
     /**
      * Publish user-related events
      */
@@ -45,6 +49,13 @@ public class EventPublisherService {
      */
     public void publishPerformanceEvent(PerformanceEvent event) {
         publishEvent(performanceEventsTopic, event.getTestType(), event);
+    }
+    
+    /**
+     * Publish order-related events
+     */
+    public void publishOrderEvent(OrderEvent event) {
+        publishEvent(orderEventsTopic, event.getOrderId().toString(), event);
     }
     
     /**

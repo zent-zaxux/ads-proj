@@ -1,7 +1,5 @@
 package com.umu.ads_proj.service;
 
-import com.umu.ads_proj.event.PerformanceEvent;
-import com.umu.ads_proj.event.UserEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.kafka.annotation.KafkaListener;
@@ -10,6 +8,10 @@ import org.springframework.kafka.support.KafkaHeaders;
 import org.springframework.messaging.handler.annotation.Header;
 import org.springframework.messaging.handler.annotation.Payload;
 import org.springframework.stereotype.Service;
+
+import com.umu.ads_proj.event.OrderEvent;
+import com.umu.ads_proj.event.PerformanceEvent;
+import com.umu.ads_proj.event.UserEvent;
 
 /**
  * Service for consuming events from Kafka topics
@@ -28,8 +30,8 @@ public class EventConsumerService {
             @Header(KafkaHeaders.RECEIVED_TOPIC) String topic,
             @Header(KafkaHeaders.RECEIVED_KEY) String key,
             @Header(KafkaHeaders.RECEIVED_PARTITION) int partition,
-            @Header(KafkaHeaders.OFFSET) long offset,
-            Acknowledgment acknowledgment) {
+            @Header(KafkaHeaders.OFFSET) long offset
+            ) {
         
         try {
             logger.info("Received user event from topic '{}' [partition={}, offset={}]: {}", 
@@ -39,7 +41,7 @@ public class EventConsumerService {
             processUserEvent(event);
             
             // Acknowledge the message
-            acknowledgment.acknowledge();
+            // acknowledgment.acknowledge();
             
         } catch (Exception e) {
             logger.error("Error processing user event from topic '{}': {}", topic, e.getMessage(), e);
@@ -56,8 +58,8 @@ public class EventConsumerService {
             @Header(KafkaHeaders.RECEIVED_TOPIC) String topic,
             @Header(KafkaHeaders.RECEIVED_KEY) String key,
             @Header(KafkaHeaders.RECEIVED_PARTITION) int partition,
-            @Header(KafkaHeaders.OFFSET) long offset,
-            Acknowledgment acknowledgment) {
+            @Header(KafkaHeaders.OFFSET) long offset
+            ) {
         
         try {
             logger.info("Received performance event from topic '{}' [partition={}, offset={}]: {}", 
@@ -67,10 +69,37 @@ public class EventConsumerService {
             processPerformanceEvent(event);
             
             // Acknowledge the message
-            acknowledgment.acknowledge();
+            // acknowledgment.acknowledge();
             
         } catch (Exception e) {
             logger.error("Error processing performance event from topic '{}': {}", topic, e.getMessage(), e);
+        }
+    }
+    
+    /**
+     * Listen to order events
+     */
+    @KafkaListener(topics = "${app.kafka.topics.order-events}", groupId = "${spring.kafka.consumer.group-id}")
+    public void handleOrderEvent(
+            @Payload OrderEvent event,
+            @Header(KafkaHeaders.RECEIVED_TOPIC) String topic,
+            @Header(KafkaHeaders.RECEIVED_KEY) String key,
+            @Header(KafkaHeaders.RECEIVED_PARTITION) int partition,
+            @Header(KafkaHeaders.OFFSET) long offset
+) {
+        
+        try {
+            logger.info("Received order event from topic '{}' [partition={}, offset={}]: {}", 
+                       topic, partition, offset, event);
+            
+            // Process the order event
+            processOrderEvent(event);
+            
+            // Acknowledge the message
+            // acknowledgment.acknowledge();
+            
+        } catch (Exception e) {
+            logger.error("Error processing order event from topic '{}': {}", topic, e.getMessage(), e);
         }
     }
     
@@ -114,10 +143,10 @@ public class EventConsumerService {
                 break;
                 
             case LOAD_TEST_COMPLETED:
-                logger.info("Load test completed: {} - Throughput: {:.2f} ops/sec, Duration: {}ms", 
-                           event.getTestType(), event.getThroughput(), event.getDurationMs());
-                // Add any business logic for test completion events
-                // For example: generate reports, send notifications, etc.
+                logger.info("Load test completed: {} - Throughput: {} ops/sec, Duration: {}ms", 
+                    event.getTestType(),
+                    String.format("%.2f", event.getThroughput()),
+                    event.getDurationMs());
                 break;
                 
             case PERFORMANCE_DEGRADATION:
@@ -132,6 +161,60 @@ public class EventConsumerService {
                 
             default:
                 logger.warn("Unknown performance action: {}", event.getAction());
+        }
+    }
+    
+    /**
+     * Process order events based on action type
+     */
+    private void processOrderEvent(OrderEvent event) {
+        switch (event.getAction()) {
+            case CREATED:
+                logger.info("Processing order creation: Order #{} for user {} - {} x{} = ${}", 
+                           event.getOrderId(), event.getUserId(), event.getProductName(), 
+                           event.getQuantity(), event.getTotalAmount());
+                // Add any business logic for order creation events
+                // For example: inventory check, payment processing preparation, etc.
+                break;
+                
+            case UPDATED:
+                logger.info("Processing order update: Order #{} for user {} - {} x{} = ${}", 
+                           event.getOrderId(), event.getUserId(), event.getProductName(), 
+                           event.getQuantity(), event.getTotalAmount());
+                // Add any business logic for order update events
+                // For example: inventory adjustment, price recalculation, etc.
+                break;
+                
+            case CONFIRMED:
+                logger.info("Processing order confirmation: Order #{} confirmed for user {}", 
+                           event.getOrderId(), event.getUserId());
+                // Add any business logic for order confirmation events
+                // For example: payment processing, inventory reservation, etc.
+                break;
+                
+            case SHIPPED:
+                logger.info("Processing order shipment: Order #{} shipped for user {}", 
+                           event.getOrderId(), event.getUserId());
+                // Add any business logic for order shipment events
+                // For example: tracking number generation, customer notification, etc.
+                break;
+                
+            case DELIVERED:
+                logger.info("Processing order delivery: Order #{} delivered to user {}", 
+                           event.getOrderId(), event.getUserId());
+                // Add any business logic for order delivery events
+                // For example: customer satisfaction survey, inventory update, etc.
+                break;
+                
+            case CANCELLED:
+                logger.info("Processing order cancellation: Order #{} cancelled for user {}", 
+                           event.getOrderId(), event.getUserId());
+                // Add any business logic for order cancellation events
+                // For example: refund processing, inventory release, etc.
+                break;
+                
+            default:
+                logger.warn("Unknown order action: {}", event.getAction());
         }
     }
 }
