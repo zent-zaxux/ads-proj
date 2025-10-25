@@ -2,14 +2,16 @@ package com.umu.ads_proj.service;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.kafka.annotation.KafkaListener;
-import org.springframework.kafka.support.Acknowledgment;
 import org.springframework.kafka.support.KafkaHeaders;
 import org.springframework.messaging.handler.annotation.Header;
 import org.springframework.messaging.handler.annotation.Payload;
 import org.springframework.stereotype.Service;
 
+import com.umu.ads_proj.entity.Payment.PaymentMethod;
 import com.umu.ads_proj.event.OrderEvent;
+import com.umu.ads_proj.event.PaymentEvent;
 import com.umu.ads_proj.event.PerformanceEvent;
 import com.umu.ads_proj.event.UserEvent;
 
@@ -20,6 +22,9 @@ import com.umu.ads_proj.event.UserEvent;
 public class EventConsumerService {
     
     private static final Logger logger = LoggerFactory.getLogger(EventConsumerService.class);
+    
+    @Autowired
+    private PaymentService paymentService;
     
     /**
      * Listen to user events
@@ -104,6 +109,33 @@ public class EventConsumerService {
     }
     
     /**
+     * Listen to payment events
+     */
+    @KafkaListener(topics = "${app.kafka.topics.payment-events}", groupId = "${spring.kafka.consumer.group-id}")
+    public void handlePaymentEvent(
+            @Payload PaymentEvent event,
+            @Header(KafkaHeaders.RECEIVED_TOPIC) String topic,
+            @Header(KafkaHeaders.RECEIVED_KEY) String key,
+            @Header(KafkaHeaders.RECEIVED_PARTITION) int partition,
+            @Header(KafkaHeaders.OFFSET) long offset
+) {
+        
+        try {
+            logger.info("Received payment event from topic '{}' [partition={}, offset={}]: {}", 
+                       topic, partition, offset, event);
+            
+            // Process the payment event
+            processPaymentEvent(event);
+            
+            // Acknowledge the message
+            // acknowledgment.acknowledge();
+            
+        } catch (Exception e) {
+            logger.error("Error processing payment event from topic '{}': {}", topic, e.getMessage(), e);
+        }
+    }
+    
+    /**
      * Process user events based on action type
      */
     private void processUserEvent(UserEvent event) {
@@ -173,8 +205,20 @@ public class EventConsumerService {
                 logger.info("Processing order creation: Order #{} for user {} - {} x{} = ${}", 
                            event.getOrderId(), event.getUserId(), event.getProductName(), 
                            event.getQuantity(), event.getTotalAmount());
-                // Add any business logic for order creation events
-                // For example: inventory check, payment processing preparation, etc.
+                
+                // Auto-create payment when order is created
+                try {
+                    paymentService.createPayment(
+                        event.getOrderId(), 
+                        event.getUserId(), 
+                        event.getTotalAmount(), 
+                        PaymentMethod.CREDIT_CARD  // Default payment method
+                    );
+                    logger.info("✓ Payment auto-created for order #{}", event.getOrderId());
+                } catch (Exception e) {
+                    logger.error("Failed to auto-create payment for order #{}: {}", 
+                                event.getOrderId(), e.getMessage());
+                }
                 break;
                 
             case UPDATED:
@@ -215,6 +259,59 @@ public class EventConsumerService {
                 
             default:
                 logger.warn("Unknown order action: {}", event.getAction());
+        }
+    }
+    
+    /**
+     * Process payment events based on action type
+     */
+    private void processPaymentEvent(PaymentEvent event) {
+        switch (event.getAction()) {
+            case PAYMENT_CREATED:
+                logger.info("Processing payment creation: Payment #{} for order #{}, user {} - Amount: ${}", 
+                           event.getPaymentId(), event.getOrderId(), event.getUserId(), event.getAmount());
+                // Add any business logic for payment creation events
+                // For example: fraud detection, risk assessment, etc.
+                break;
+                
+            case PAYMENT_PROCESSING:
+                logger.info("Processing payment: Payment #{} for order #{} - Transaction: {}", 
+                           event.getPaymentId(), event.getOrderId(), event.getTransactionId());
+                // Add any business logic for payment processing events
+                // For example: update payment gateway status, notify customer, etc.
+                break;
+                
+            case PAYMENT_COMPLETED:
+                logger.info("Payment completed: Payment #{} for order #{}, user {} - Amount: ${}, Transaction: {}", 
+                           event.getPaymentId(), event.getOrderId(), event.getUserId(), 
+                           event.getAmount(), event.getTransactionId());
+                // Add any business logic for successful payment events
+                // For example: send receipt, update inventory, trigger order fulfillment, etc.
+                break;
+                
+            case PAYMENT_FAILED:
+                logger.warn("Payment failed: Payment #{} for order #{} - Reason: {}", 
+                           event.getPaymentId(), event.getOrderId(), event.getFailureReason());
+                // Add any business logic for failed payment events
+                // For example: notify customer, suggest alternative payment methods, cancel order, etc.
+                break;
+                
+            case PAYMENT_REFUNDED:
+                logger.info("Payment refunded: Payment #{} for order #{} - Amount: ${}, Reason: {}", 
+                           event.getPaymentId(), event.getOrderId(), event.getAmount(), event.getFailureReason());
+                // Add any business logic for refund events
+                // For example: update accounting, notify customer, trigger return process, etc.
+                break;
+                
+            case PAYMENT_CANCELLED:
+                logger.info("Payment cancelled: Payment #{} for order #{} - Reason: {}", 
+                           event.getPaymentId(), event.getOrderId(), event.getFailureReason());
+                // Add any business logic for cancelled payment events
+                // For example: release payment authorization, notify customer, etc.
+                break;
+                
+            default:
+                logger.warn("Unknown payment action: {}", event.getAction());
         }
     }
 }

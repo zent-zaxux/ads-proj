@@ -1,0 +1,7 @@
+session,avgUsers,totalRequests,successfulRequests,failedRequests,successRate,avgLatency,maxLatency,minLatency,throughput,duration,timestamp
+[0;34m  Session 1/3[0m
+1,155,0,0,0,0,0,0,999999,0.00,51,2025-10-24 21:21:12
+[0;34m  Session 2/3[0m
+2,155,0,0,0,0,0,0,999999,0.00,51,2025-10-24 21:22:03
+[0;34m  Session 3/3[0m
+3,155,0,0,0,0,0,0,999999,0.00,51,2025-10-24 21:22:54

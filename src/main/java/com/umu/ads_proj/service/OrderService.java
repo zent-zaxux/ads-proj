@@ -43,7 +43,7 @@ public class OrderService {
         Order savedOrder = orderRepository.save(order);
         logger.info("Order created successfully with ID: {}", savedOrder.getId());
         
-        // Publish order creation event to Kafka
+        // Publish order creation event to Kafka asynchronously (non-blocking)
         OrderEvent orderEvent = OrderEvent.orderCreated(
             savedOrder.getId(), 
             savedOrder.getUserId(), 
@@ -51,7 +51,7 @@ public class OrderService {
             savedOrder.getQuantity(), 
             savedOrder.getTotalAmount()
         );
-        eventPublisher.publishOrderEvent(orderEvent);
+        eventPublisher.publishOrderEventAsync(orderEvent);
         
         return savedOrder;
     }

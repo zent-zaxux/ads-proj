@@ -27,28 +27,33 @@ public class UserService {
     private EventPublisherService eventPublisher;
     
     /**
-     * Create a new user
+     * Create a new user (idempotent - returns existing if found)
+     * This prevents duplicate key errors during high-load scenarios
      */
     public User createUser(User user) {
         logger.info("Creating new user with email: {}", user.getEmail());
         
-        // Validation
-        if (userRepository.existsByEmail(user.getEmail())) {
-            logger.warn("User with email {} already exists", user.getEmail());
-            throw new IllegalArgumentException("User with email " + user.getEmail() + " already exists");
+        // Try to find existing user by phone number (unique constraint)
+        Optional<User> existingByPhone = userRepository.findByPhoneNumber(user.getPhoneNumber());
+        if (existingByPhone.isPresent()) {
+            logger.info("User with phone number {} already exists, returning existing user", user.getPhoneNumber());
+            return existingByPhone.get();
         }
         
-        if (userRepository.existsByPhoneNumber(user.getPhoneNumber())) {
-            logger.warn("User with phone number {} already exists", user.getPhoneNumber());
-            throw new IllegalArgumentException("User with phone number " + user.getPhoneNumber() + " already exists");
+        // Try to find existing user by email (unique constraint)
+        Optional<User> existingByEmail = userRepository.findByEmail(user.getEmail());
+        if (existingByEmail.isPresent()) {
+            logger.info("User with email {} already exists, returning existing user", user.getEmail());
+            return existingByEmail.get();
         }
         
+        // Create new user
         User savedUser = userRepository.save(user);
         logger.info("User created successfully with ID: {}", savedUser.getId());
         
-        // Publish user creation event to Kafka
+        // Publish user creation event to Kafka (async)
         UserEvent userEvent = UserEvent.userCreated(savedUser.getId(), savedUser.getName(), savedUser.getEmail());
-        eventPublisher.publishUserEvent(userEvent);
+        eventPublisher.publishUserEventAsync(userEvent);
         
         return savedUser;
     }

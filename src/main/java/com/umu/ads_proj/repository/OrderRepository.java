@@ -92,4 +92,10 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
      */
     @Query("SELECT o FROM Order o ORDER BY o.createdAt DESC")
     List<Order> findRecentOrders(Pageable pageable);
+    
+    /**
+     * Find orders by status ordered by creation date (ascending)
+     * Used by FulfillmentAgent to process orders in FIFO order
+     */
+    List<Order> findByStatusOrderByCreatedAtAsc(Order.OrderStatus status);
 }

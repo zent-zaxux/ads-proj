@@ -1,7 +1,9 @@
 package com.umu.ads_proj.service;
 
 import com.umu.ads_proj.event.BaseEvent;
+import com.umu.ads_proj.event.NotificationEvent;
 import com.umu.ads_proj.event.OrderEvent;
+import com.umu.ads_proj.event.PaymentEvent;
 import com.umu.ads_proj.event.PerformanceEvent;
 import com.umu.ads_proj.event.UserEvent;
 import org.slf4j.Logger;
@@ -10,6 +12,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 import java.util.concurrent.CompletableFuture;
@@ -37,11 +40,26 @@ public class EventPublisherService {
     @Value("${app.kafka.topics.order-events}")
     private String orderEventsTopic;
     
+    @Value("${app.kafka.topics.payment-events}")
+    private String paymentEventsTopic;
+    
+    @Value("${app.kafka.topics.notification-events}")
+    private String notificationEventsTopic;
+    
     /**
      * Publish user-related events
      */
     public void publishUserEvent(UserEvent event) {
         publishEvent(userEventsTopic, event.getUserId().toString(), event);
+    }
+    
+    /**
+     * Publish user-related events asynchronously (non-blocking)
+     */
+    @Async
+    public CompletableFuture<Void> publishUserEventAsync(UserEvent event) {
+        publishEvent(userEventsTopic, event.getUserId().toString(), event);
+        return CompletableFuture.completedFuture(null);
     }
     
     /**
@@ -56,6 +74,41 @@ public class EventPublisherService {
      */
     public void publishOrderEvent(OrderEvent event) {
         publishEvent(orderEventsTopic, event.getOrderId().toString(), event);
+    }
+    
+    /**
+     * Publish order-related events asynchronously (non-blocking)
+     */
+    @Async
+    public CompletableFuture<Void> publishOrderEventAsync(OrderEvent event) {
+        publishEvent(orderEventsTopic, event.getOrderId().toString(), event);
+        return CompletableFuture.completedFuture(null);
+    }
+    
+    /**
+     * Publish payment-related events
+     */
+    public void publishPaymentEvent(PaymentEvent event) {
+        publishEvent(paymentEventsTopic, event.getPaymentId().toString(), event);
+    }
+    
+    /**
+     * Publish payment-related events asynchronously (non-blocking)
+     */
+    @Async
+    public CompletableFuture<Void> publishPaymentEventAsync(PaymentEvent event) {
+        publishEvent(paymentEventsTopic, event.getPaymentId().toString(), event);
+        return CompletableFuture.completedFuture(null);
+    }
+    
+    /**
+     * Publish notification-related events
+     */
+    public void publishNotificationEvent(NotificationEvent event) {
+        String key = event.getNotificationId() != null ? 
+                     event.getNotificationId().toString() : 
+                     event.getOrderId().toString();
+        publishEvent(notificationEventsTopic, key, event);
     }
     
     /**

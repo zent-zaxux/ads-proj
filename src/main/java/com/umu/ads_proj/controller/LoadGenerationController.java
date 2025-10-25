@@ -128,4 +128,182 @@ public class LoadGenerationController {
         
         return ResponseEntity.ok(response);
     }
+    
+    // ==================== ORDER LOAD GENERATION ENDPOINTS ====================
+    
+    /**
+     * Generate order creation load
+     */
+    @PostMapping("/orders")
+    @Timed(value = "load.generation.orders", description = "Time taken to generate order creation load")
+    public ResponseEntity<Map<String, Object>> generateOrderLoad(
+            @RequestParam(defaultValue = "100") int numberOfOrders,
+            @RequestParam(defaultValue = "10") int concurrencyLevel) {
+        
+        logger.info("Order load generation request: {} orders, concurrency {}", numberOfOrders, concurrencyLevel);
+        
+        CompletableFuture<String> futureResult = loadGenerationService.generateOrderLoad(numberOfOrders, concurrencyLevel);
+        
+        Map<String, Object> response = new HashMap<>();
+        response.put("status", "started");
+        response.put("numberOfOrders", numberOfOrders);
+        response.put("concurrencyLevel", concurrencyLevel);
+        response.put("message", "Order load generation started asynchronously");
+        
+        futureResult.thenAccept(result -> logger.info("Order load completed: {}", result));
+        
+        return ResponseEntity.ok(response);
+    }
+    
+    /**
+     * Generate mixed order operations load
+     */
+    @PostMapping("/orders/mixed")
+    @Timed(value = "load.generation.orders.mixed", description = "Time taken to generate mixed order operations")
+    public ResponseEntity<Map<String, Object>> generateMixedOrderLoad(
+            @RequestParam(defaultValue = "200") int operations) {
+        
+        logger.info("Mixed order load generation: {} operations", operations);
+        
+        CompletableFuture<String> futureResult = loadGenerationService.generateMixedOrderLoad(operations);
+        
+        Map<String, Object> response = new HashMap<>();
+        response.put("status", "started");
+        response.put("operations", operations);
+        response.put("message", "Mixed order load generation started asynchronously");
+        
+        futureResult.thenAccept(result -> logger.info("Mixed order load completed: {}", result));
+        
+        return ResponseEntity.ok(response);
+    }
+    
+    // ==================== PAYMENT LOAD GENERATION ENDPOINTS ====================
+    
+    /**
+     * Generate payment processing load
+     */
+    @PostMapping("/payments")
+    @Timed(value = "load.generation.payments", description = "Time taken to generate payment processing load")
+    public ResponseEntity<Map<String, Object>> generatePaymentLoad(
+            @RequestParam(defaultValue = "50") int numberOfPayments,
+            @RequestParam(defaultValue = "5") int concurrencyLevel) {
+        
+        logger.info("Payment load generation request: {} payments, concurrency {}", numberOfPayments, concurrencyLevel);
+        
+        CompletableFuture<String> futureResult = loadGenerationService.generatePaymentLoad(numberOfPayments, concurrencyLevel);
+        
+        Map<String, Object> response = new HashMap<>();
+        response.put("status", "started");
+        response.put("numberOfPayments", numberOfPayments);
+        response.put("concurrencyLevel", concurrencyLevel);
+        response.put("message", "Payment load generation started asynchronously");
+        
+        futureResult.thenAccept(result -> logger.info("Payment load completed: {}", result));
+        
+        return ResponseEntity.ok(response);
+    }
+    
+    // ==================== COMPLETE JOURNEY ENDPOINTS ====================
+    
+    /**
+     * Generate complete user journey load (User -> Order -> Payment)
+     */
+    @PostMapping("/journey")
+    @Timed(value = "load.generation.journey", description = "Time taken to generate complete journey load")
+    public ResponseEntity<Map<String, Object>> generateCompleteJourneyLoad(
+            @RequestParam(defaultValue = "25") int numberOfJourneys,
+            @RequestParam(defaultValue = "5") int concurrencyLevel) {
+        
+        logger.info("Complete journey load generation: {} journeys, concurrency {}", numberOfJourneys, concurrencyLevel);
+        
+        CompletableFuture<String> futureResult = loadGenerationService.generateCompleteJourneyLoad(numberOfJourneys, concurrencyLevel);
+        
+        Map<String, Object> response = new HashMap<>();
+        response.put("status", "started");
+        response.put("numberOfJourneys", numberOfJourneys);
+        response.put("concurrencyLevel", concurrencyLevel);
+        response.put("message", "Complete journey load generation started asynchronously");
+        
+        futureResult.thenAccept(result -> logger.info("Complete journey load completed: {}", result));
+        
+        return ResponseEntity.ok(response);
+    }
+    
+    // ==================== PERFORMANCE TEST SCENARIOS ====================
+    
+    /**
+     * Ramp-up load test: gradually increase load
+     */
+    @PostMapping("/test/ramp-up")
+    @Timed(value = "load.test.rampup", description = "Time taken for ramp-up load test")
+    public ResponseEntity<Map<String, Object>> rampUpLoadTest(
+            @RequestParam(defaultValue = "100") int maxOperations,
+            @RequestParam(defaultValue = "5") int rampUpSteps) {
+        
+        logger.info("Ramp-up load test: max {} operations in {} steps", maxOperations, rampUpSteps);
+        
+        CompletableFuture<String> futureResult = loadGenerationService.rampUpLoadTest(maxOperations, rampUpSteps);
+        
+        Map<String, Object> response = new HashMap<>();
+        response.put("status", "started");
+        response.put("testType", "ramp-up");
+        response.put("maxOperations", maxOperations);
+        response.put("rampUpSteps", rampUpSteps);
+        response.put("message", "Ramp-up load test started asynchronously");
+        
+        futureResult.thenAccept(result -> logger.info("Ramp-up test completed: {}", result));
+        
+        return ResponseEntity.ok(response);
+    }
+    
+    /**
+     * Sustained load test: constant load for duration
+     */
+    @PostMapping("/test/sustained")
+    @Timed(value = "load.test.sustained", description = "Time taken for sustained load test")
+    public ResponseEntity<Map<String, Object>> sustainedLoadTest(
+            @RequestParam(defaultValue = "10") int operationsPerSecond,
+            @RequestParam(defaultValue = "30") int durationSeconds) {
+        
+        logger.info("Sustained load test: {} ops/sec for {} seconds", operationsPerSecond, durationSeconds);
+        
+        CompletableFuture<String> futureResult = loadGenerationService.sustainedLoadTest(operationsPerSecond, durationSeconds);
+        
+        Map<String, Object> response = new HashMap<>();
+        response.put("status", "started");
+        response.put("testType", "sustained");
+        response.put("operationsPerSecond", operationsPerSecond);
+        response.put("durationSeconds", durationSeconds);
+        response.put("expectedTotalOperations", operationsPerSecond * durationSeconds);
+        response.put("message", "Sustained load test started asynchronously");
+        
+        futureResult.thenAccept(result -> logger.info("Sustained test completed: {}", result));
+        
+        return ResponseEntity.ok(response);
+    }
+    
+    /**
+     * Spike test: sudden increase in load
+     */
+    @PostMapping("/test/spike")
+    @Timed(value = "load.test.spike", description = "Time taken for spike load test")
+    public ResponseEntity<Map<String, Object>> spikeLoadTest(
+            @RequestParam(defaultValue = "10") int baselineOps,
+            @RequestParam(defaultValue = "100") int spikeOps) {
+        
+        logger.info("Spike load test: baseline {} ops, spike {} ops", baselineOps, spikeOps);
+        
+        CompletableFuture<String> futureResult = loadGenerationService.spikeLoadTest(baselineOps, spikeOps);
+        
+        Map<String, Object> response = new HashMap<>();
+        response.put("status", "started");
+        response.put("testType", "spike");
+        response.put("baselineOperations", baselineOps);
+        response.put("spikeOperations", spikeOps);
+        response.put("message", "Spike load test started asynchronously");
+        
+        futureResult.thenAccept(result -> logger.info("Spike test completed: {}", result));
+        
+        return ResponseEntity.ok(response);
+    }
 }
