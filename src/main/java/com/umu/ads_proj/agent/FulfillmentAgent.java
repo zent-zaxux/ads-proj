@@ -9,6 +9,7 @@ import io.micrometer.core.annotation.Timed;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.config.KafkaListenerEndpointRegistry;
 import org.springframework.kafka.listener.MessageListenerContainer;
 import org.springframework.scheduling.annotation.Async;
@@ -22,6 +23,7 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.Collectors;
 
 /**
  * Autonomous Fulfillment Agent
@@ -66,11 +68,20 @@ public class FulfillmentAgent {
     // Thread pools
     private ScheduledExecutorService schedulerExecutor;
     private ExecutorService workerExecutor;
+    private ExecutorService processingExecutor; // NEW: For parallel order processing
     
-    // Configuration
-    private volatile int processingDelayMs = 2000; // Default: 2 seconds per status transition
-    private volatile int batchSize = 5; // Process 5 orders at a time
-    private volatile int pollingIntervalSeconds = 5; // Check for new orders every 5 seconds
+    // Configuration - HIGHLY OPTIMIZED for maximum performance
+    @Value("${fulfillment.agent.processing-delay-ms:100}")
+    private int processingDelayMs;
+    
+    @Value("${fulfillment.agent.batch-size:50}")
+    private int batchSize;
+    
+    @Value("${fulfillment.agent.polling-interval-seconds:1}")
+    private int pollingIntervalSeconds;
+    
+    @Value("${fulfillment.agent.parallel-threads:8}")
+    private int parallelThreads;
     
     // Metrics
     private final AtomicLong ordersProcessed = new AtomicLong(0);
@@ -108,6 +119,7 @@ public class FulfillmentAgent {
         logger.info("   Processing Delay: {}ms per transition", processingDelayMs);
         logger.info("   Batch Size: {} orders", batchSize);
         logger.info("   Polling Interval: {}s", pollingIntervalSeconds);
+        logger.info("   Parallel Threads: {}", parallelThreads);
         logger.info("═══════════════════════════════════════════════════════════");
         
         running.set(true);
@@ -115,9 +127,10 @@ public class FulfillmentAgent {
         startTime = LocalDateTime.now();
         pauseTime = null;
         
-        // Initialize thread pools
+        // Initialize thread pools - OPTIMIZED with parallel processing
         schedulerExecutor = Executors.newScheduledThreadPool(2);
         workerExecutor = Executors.newFixedThreadPool(10);
+        processingExecutor = Executors.newFixedThreadPool(parallelThreads); // NEW: Parallel processing pool
         
         // Start order processing loop
         schedulerExecutor.scheduleAtFixedRate(
@@ -175,6 +188,19 @@ public class FulfillmentAgent {
                 }
             } catch (InterruptedException e) {
                 workerExecutor.shutdownNow();
+                Thread.currentThread().interrupt();
+            }
+        }
+        
+        // NEW: Shutdown processing executor
+        if (processingExecutor != null) {
+            processingExecutor.shutdown();
+            try {
+                if (!processingExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+                    processingExecutor.shutdownNow();
+                }
+            } catch (InterruptedException e) {
+                processingExecutor.shutdownNow();
                 Thread.currentThread().interrupt();
             }
         }
@@ -245,7 +271,8 @@ public class FulfillmentAgent {
     }
     
     /**
-     * Main order processing loop
+     * Main order processing loop - OPTIMIZED with parallel batch processing
+     * FAST TRACK MODE: Processes orders through all stages in one go
      */
     @Async
     @Timed(value = "fulfillment.agent.processing", description = "Time to process orders")
@@ -255,31 +282,30 @@ public class FulfillmentAgent {
         }
         
         try {
-            // Find pending orders
+            // Find pending orders only (we process them through all stages)
             List<Order> pendingOrders = orderRepository.findByStatusOrderByCreatedAtAsc(
                 Order.OrderStatus.PENDING
             );
             
             if (!pendingOrders.isEmpty()) {
-                logger.info("📦 Found {} PENDING orders to process", pendingOrders.size());
+                logger.info("📦 Found {} PENDING orders to process (FAST TRACK)", pendingOrders.size());
                 
-                // Process in batches
+                // Process in batches with parallel execution - OPTIMIZED
                 List<Order> batch = pendingOrders.stream()
                     .limit(batchSize)
                     .toList();
                 
-                for (Order order : batch) {
-                    if (!running.get() || paused.get()) {
-                        break;
-                    }
-                    
-                    workerExecutor.submit(() -> processOrderWorkflow(order));
-                }
+                // Process all orders in batch in parallel using CompletableFuture
+                List<CompletableFuture<Void>> futures = batch.stream()
+                    .map(order -> CompletableFuture.runAsync(
+                        () -> processOrderWorkflow(order), 
+                        processingExecutor
+                    ))
+                    .collect(Collectors.toList());
+                
+                // Wait for all to complete
+                CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
             }
-            
-            // Also process orders in other statuses
-            processConfirmedOrders();
-            processShippedOrders();
             
         } catch (Exception e) {
             logger.error("Error in order processing loop: {}", e.getMessage(), e);
@@ -287,7 +313,8 @@ public class FulfillmentAgent {
     }
     
     /**
-     * Process a single order through the complete workflow
+     * Process a single order through the COMPLETE workflow - FAST TRACK MODE
+     * Processes PENDING → CONFIRMED → SHIPPED → DELIVERED in one go
      */
     private void processOrderWorkflow(Order order) {
         long startTime = System.currentTimeMillis();
@@ -295,17 +322,30 @@ public class FulfillmentAgent {
         try {
             logger.info("🔄 Processing order #{} (Status: {})", order.getId(), order.getStatus());
             
-            // Simulate processing time
-            Thread.sleep(processingDelayMs);
-            
-            // Transition PENDING → CONFIRMED
+            // FAST TRACK: Process through all stages immediately
             if (order.getStatus() == Order.OrderStatus.PENDING) {
+                // PENDING → CONFIRMED
+                Thread.sleep(processingDelayMs);
                 orderService.updateOrderStatus(order.getId(), Order.OrderStatus.CONFIRMED);
                 ordersConfirmed.incrementAndGet();
-                logger.info("✅ Order #{} → CONFIRMED", order.getId());
+                ordersProcessed.incrementAndGet();
+                logger.debug("✅ Order #{} → CONFIRMED", order.getId());
+                
+                // CONFIRMED → SHIPPED
+                Thread.sleep(processingDelayMs);
+                orderService.updateOrderStatus(order.getId(), Order.OrderStatus.SHIPPED);
+                ordersShipped.incrementAndGet();
+                ordersProcessed.incrementAndGet();
+                logger.debug("✅ Order #{} → SHIPPED", order.getId());
+                
+                // SHIPPED → DELIVERED
+                Thread.sleep(processingDelayMs);
+                orderService.updateOrderStatus(order.getId(), Order.OrderStatus.DELIVERED);
+                ordersDelivered.incrementAndGet();
+                ordersProcessed.incrementAndGet();
+                logger.info("✅ Order #{} → DELIVERED (FAST TRACK)", order.getId());
             }
             
-            ordersProcessed.incrementAndGet();
             long processingTime = System.currentTimeMillis() - startTime;
             totalProcessingTimeMs.addAndGet(processingTime);
             
@@ -315,86 +355,6 @@ public class FulfillmentAgent {
         } catch (Exception e) {
             logger.error("Failed to process order #{}: {}", order.getId(), e.getMessage());
             ordersFailed.incrementAndGet();
-        }
-    }
-    
-    /**
-     * Process CONFIRMED orders → SHIPPED
-     */
-    private void processConfirmedOrders() {
-        try {
-            List<Order> confirmedOrders = orderRepository.findByStatusOrderByCreatedAtAsc(
-                Order.OrderStatus.CONFIRMED
-            );
-            
-            if (!confirmedOrders.isEmpty()) {
-                logger.debug("📦 Found {} CONFIRMED orders to ship", confirmedOrders.size());
-                
-                List<Order> batch = confirmedOrders.stream()
-                    .limit(batchSize)
-                    .toList();
-                
-                for (Order order : batch) {
-                    if (!running.get() || paused.get()) {
-                        break;
-                    }
-                    
-                    workerExecutor.submit(() -> {
-                        try {
-                            Thread.sleep(processingDelayMs);
-                            orderService.updateOrderStatus(order.getId(), Order.OrderStatus.SHIPPED);
-                            ordersShipped.incrementAndGet();
-                            ordersProcessed.incrementAndGet();
-                            logger.info("✅ Order #{} → SHIPPED", order.getId());
-                        } catch (Exception e) {
-                            logger.error("Failed to ship order #{}: {}", order.getId(), e.getMessage());
-                            ordersFailed.incrementAndGet();
-                        }
-                    });
-                }
-            }
-        } catch (Exception e) {
-            logger.error("Error processing confirmed orders: {}", e.getMessage());
-        }
-    }
-    
-    /**
-     * Process SHIPPED orders → DELIVERED
-     */
-    private void processShippedOrders() {
-        try {
-            List<Order> shippedOrders = orderRepository.findByStatusOrderByCreatedAtAsc(
-                Order.OrderStatus.SHIPPED
-            );
-            
-            if (!shippedOrders.isEmpty()) {
-                logger.debug("📦 Found {} SHIPPED orders to deliver", shippedOrders.size());
-                
-                List<Order> batch = shippedOrders.stream()
-                    .limit(batchSize)
-                    .toList();
-                
-                for (Order order : batch) {
-                    if (!running.get() || paused.get()) {
-                        break;
-                    }
-                    
-                    workerExecutor.submit(() -> {
-                        try {
-                            Thread.sleep(processingDelayMs);
-                            orderService.updateOrderStatus(order.getId(), Order.OrderStatus.DELIVERED);
-                            ordersDelivered.incrementAndGet();
-                            ordersProcessed.incrementAndGet();
-                            logger.info("✅ Order #{} → DELIVERED", order.getId());
-                        } catch (Exception e) {
-                            logger.error("Failed to deliver order #{}: {}", order.getId(), e.getMessage());
-                            ordersFailed.incrementAndGet();
-                        }
-                    });
-                }
-            }
-        } catch (Exception e) {
-            logger.error("Error processing shipped orders: {}", e.getMessage());
         }
     }
     

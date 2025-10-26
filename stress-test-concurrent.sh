@@ -17,10 +17,10 @@ NC='\033[0m'
 
 # Configuration
 BASE_URL=${BASE_URL:-"http://localhost:8081"}
-NUM_SESSIONS=${NUM_SESSIONS:-10}
-MIN_WORKERS=${MIN_WORKERS:-10}
-MAX_WORKERS=${MAX_WORKERS:-400}  # Reduced to avoid system resource exhaustion
-DURATION=${DURATION:-90}  # Longer duration to accommodate worker ramp-up
+# Load levels to test sequentially in each round
+LOAD_LEVELS=(10 50 100 200 300 400)
+NUM_ROUNDS=${NUM_ROUNDS:-10}  # Number of complete rounds to run
+DURATION=${DURATION:-60}  # 60 seconds per test
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 
 # Directory setup
@@ -38,10 +38,11 @@ echo -e "${CYAN}╚════════════════════�
 echo ""
 echo -e "${YELLOW}Test Configuration:${NC}"
 echo "  Base URL:             ${BASE_URL}"
-echo "  Number of Sessions:   ${NUM_SESSIONS}"
-echo "  Workers per Session:  ${MIN_WORKERS} → ${MAX_WORKERS} (gradual ramp-up)"
-echo "  Duration per Session: ${DURATION}s"
-echo "  Test Mode:            Continuous worker scaling"
+echo "  Number of Rounds:     ${NUM_ROUNDS}"
+echo "  Load Levels per Round: ${LOAD_LEVELS[*]}"
+echo "  Total Tests:          $((NUM_ROUNDS * ${#LOAD_LEVELS[@]}))"
+echo "  Duration per Test:    ${DURATION}s"
+echo "  Test Mode:            Sequential load levels (10→400) per round"
 echo "  Log Directory:        ${LOG_DIR}"
 echo ""
 
@@ -58,7 +59,7 @@ fi
 echo ""
 
 # Initialize CSV
-echo "timestamp,session_number,concurrent_workers,duration_seconds,total_requests,successful_requests,failed_requests,success_rate_percent,min_latency_ms,avg_latency_ms,max_latency_ms,p50_latency_ms,p95_latency_ms,p99_latency_ms,throughput_req_per_sec,test_start_time,test_end_time" > "$CSV_FILE"
+echo "timestamp,round_number,load_level,duration_seconds,total_requests,successful_requests,failed_requests,success_rate_percent,min_latency_ms,avg_latency_ms,max_latency_ms,p50_latency_ms,p95_latency_ms,p99_latency_ms,throughput_req_per_sec,test_start_time,test_end_time" > "$CSV_FILE"
 echo -e "${GREEN}✓ CSV file initialized: $CSV_FILE${NC}"
 echo ""
 
@@ -121,173 +122,172 @@ worker_process() {
 }
 
 # ═══════════════════════════════════════════════════════════════════
-# Main Test Loop
+# Main Test Loop - Multiple Rounds of Sequential Load Levels
 # ═══════════════════════════════════════════════════════════════════
 echo -e "${CYAN}╔════════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${CYAN}║         STARTING CONCURRENT STRESS TEST SESSIONS              ║${NC}"
+echo -e "${CYAN}║         STARTING MULTI-ROUND SEQUENTIAL LOAD TEST             ║${NC}"
 echo -e "${CYAN}╚════════════════════════════════════════════════════════════════╝${NC}"
 echo ""
 
-TOTAL_SESSIONS=${NUM_SESSIONS}
+TOTAL_TESTS=$((NUM_ROUNDS * ${#LOAD_LEVELS[@]}))
+TEST_COUNTER=0
 
-for SESSION_NUMBER in $(seq 1 $TOTAL_SESSIONS); do
+for ROUND in $(seq 1 $NUM_ROUNDS); do
+    echo -e "${YELLOW}╔═══════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${YELLOW}║               ROUND ${ROUND}/${NUM_ROUNDS} - LOAD CYCLE 10→400                 ║${NC}"
+    echo -e "${YELLOW}╚═══════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
     
-    echo -e "${YELLOW}═══════════════════════════════════════════════════════════════${NC}"
-    echo -e "${YELLOW}  SESSION ${SESSION_NUMBER}/${TOTAL_SESSIONS}: Ramping ${MIN_WORKERS} → ${MAX_WORKERS} Workers${NC}"
-    echo -e "${YELLOW}═══════════════════════════════════════════════════════════════${NC}"
-    
-    LOG_FILE="${LOG_DIR}/session_${SESSION_NUMBER}_ramp_${MIN_WORKERS}_to_${MAX_WORKERS}.log"
-    LATENCY_FILE="${LOG_DIR}/session_${SESSION_NUMBER}_latencies.dat"
-    RESULTS_FILE="${LOG_DIR}/session_${SESSION_NUMBER}_results.dat"
-    TEST_START=$(date -u +"%Y-%m-%d %H:%M:%S")
-    TEST_START_EPOCH=$(date +%s)
-    END_TIME=$((TEST_START_EPOCH + DURATION))
-    
-    # Clear temporary files
-    > "$LATENCY_FILE"
-    > "$RESULTS_FILE"
-    
-    echo "Session ${SESSION_NUMBER} - ${MIN_WORKERS} to ${MAX_WORKERS} concurrent workers (gradual ramp)" > "$LOG_FILE"
-    echo "Duration: ${DURATION} seconds" >> "$LOG_FILE"
-    echo "Start time: ${TEST_START}" >> "$LOG_FILE"
-    echo "" >> "$LOG_FILE"
-    
-    echo -e "${BLUE}Spawning workers gradually from ${MIN_WORKERS} to ${MAX_WORKERS} over ${DURATION}s${NC}"
-    
-    # Calculate worker increment rate
-    WORKER_INCREMENT_RATE=$(awk "BEGIN {printf \"%.4f\", ($MAX_WORKERS - $MIN_WORKERS) / $DURATION}")
-    
-    # Track spawned worker PIDs
-    WORKER_PIDS=()
-    CURRENT_WORKERS=0
-    
-    # Start with initial workers
-    for worker_id in $(seq 1 $MIN_WORKERS); do
-        worker_process $worker_id $SESSION_NUMBER $END_TIME "$RESULTS_FILE" "$LATENCY_FILE" &
-        WORKER_PIDS+=($!)
-    done
-    CURRENT_WORKERS=$MIN_WORKERS
-    NEXT_WORKER_ID=$((MIN_WORKERS + 1))
-    
-    echo -e "${CYAN}Started with ${MIN_WORKERS} workers, ramping up...${NC}"
-    
-    # Monitor progress and spawn new workers gradually
-    echo -e "${CYAN}Test in progress...${NC}"
-    ELAPSED=0
-    LAST_SPAWN_TIME=0
-    
-    while [ $ELAPSED -lt $DURATION ]; do
-        sleep 1
-        ELAPSED=$(($(date +%s) - TEST_START_EPOCH))
+    for LOAD_LEVEL in "${LOAD_LEVELS[@]}"; do
+        TEST_COUNTER=$((TEST_COUNTER + 1))
         
-        # Calculate target worker count based on elapsed time
-        TARGET_WORKERS=$(awk "BEGIN {target = $MIN_WORKERS + ($WORKER_INCREMENT_RATE * $ELAPSED); if(target > $MAX_WORKERS) target = $MAX_WORKERS; printf \"%.0f\", target}")
+        echo -e "${YELLOW}═══════════════════════════════════════════════════════════════${NC}"
+        echo -e "${YELLOW}  Round ${ROUND}/${NUM_ROUNDS} | Load Level: ${LOAD_LEVEL} concurrent users | Test ${TEST_COUNTER}/${TOTAL_TESTS}${NC}"
+        echo -e "${YELLOW}═══════════════════════════════════════════════════════════════${NC}"
         
-        # Spawn new workers if needed
-        while [ $CURRENT_WORKERS -lt $TARGET_WORKERS ] && [ $CURRENT_WORKERS -lt $MAX_WORKERS ]; do
-            worker_process $NEXT_WORKER_ID $SESSION_NUMBER $END_TIME "$RESULTS_FILE" "$LATENCY_FILE" &
+        LOG_FILE="${LOG_DIR}/round_${ROUND}_load_${LOAD_LEVEL}.log"
+        LATENCY_FILE="${LOG_DIR}/round_${ROUND}_load_${LOAD_LEVEL}_latencies.dat"
+        RESULTS_FILE="${LOG_DIR}/round_${ROUND}_load_${LOAD_LEVEL}_results.dat"
+        TEST_START=$(date -u +"%Y-%m-%d %H:%M:%S")
+        TEST_START_EPOCH=$(date +%s)
+        END_TIME=$((TEST_START_EPOCH + DURATION))
+        
+        # Clear temporary files
+        > "$LATENCY_FILE"
+        > "$RESULTS_FILE"
+        
+        echo "Round ${ROUND} - Load Level ${LOAD_LEVEL}" > "$LOG_FILE"
+        echo "Duration: ${DURATION} seconds" >> "$LOG_FILE"
+        echo "Start time: ${TEST_START}" >> "$LOG_FILE"
+        echo "" >> "$LOG_FILE"
+        
+        echo -e "${BLUE}Spawning ${LOAD_LEVEL} concurrent workers...${NC}"
+        
+        # Track spawned worker PIDs
+        WORKER_PIDS=()
+        
+        # Start all workers at once
+        for worker_id in $(seq 1 $LOAD_LEVEL); do
+            worker_process $worker_id "${ROUND}_${LOAD_LEVEL}" $END_TIME "$RESULTS_FILE" "$LATENCY_FILE" &
             WORKER_PIDS+=($!)
-            NEXT_WORKER_ID=$((NEXT_WORKER_ID + 1))
-            CURRENT_WORKERS=$((CURRENT_WORKERS + 1))
         done
         
-        # Progress update every 5 seconds
-        if [ $((ELAPSED % 5)) -eq 0 ]; then
+        echo -e "${CYAN}All ${LOAD_LEVEL} workers started, test in progress...${NC}"
+        
+        # Monitor progress
+        ELAPSED=0
+        while [ $ELAPSED -lt $DURATION ]; do
+            sleep 5
+            ELAPSED=$(($(date +%s) - TEST_START_EPOCH))
+            
             CURRENT_TOTAL=$(wc -l < "$RESULTS_FILE" 2>/dev/null || echo 0)
             CURRENT_SUCCESS=$(grep -c "SUCCESS" "$RESULTS_FILE" 2>/dev/null || echo 0)
             CURRENT_THROUGHPUT=$(awk "BEGIN {if($ELAPSED>0) printf \"%.2f\", $CURRENT_TOTAL/$ELAPSED; else print \"0\"}")
-            printf "\r  [${ELAPSED}s/${DURATION}s] Workers: ${CURRENT_WORKERS}/${MAX_WORKERS} | Requests: ${CURRENT_TOTAL} | Success: ${CURRENT_SUCCESS} | Throughput: ${CURRENT_THROUGHPUT} req/s"
+            printf "\r  [${ELAPSED}s/${DURATION}s] Workers: ${LOAD_LEVEL} | Requests: ${CURRENT_TOTAL} | Success: ${CURRENT_SUCCESS} | Throughput: ${CURRENT_THROUGHPUT} req/s"
+        done
+        
+        # Wait for all workers to finish
+        wait
+        
+        echo ""
+        
+        TEST_END_EPOCH=$(date +%s)
+        TEST_END=$(date -u +"%Y-%m-%d %H:%M:%S")
+        ACTUAL_DURATION=$((TEST_END_EPOCH - TEST_START_EPOCH))
+        
+        # Calculate metrics from results
+        TOTAL_REQ=$(wc -l < "$RESULTS_FILE" 2>/dev/null || echo 0)
+        SUCCESS_REQ=$(grep -c "SUCCESS" "$RESULTS_FILE" 2>/dev/null || echo 0)
+        FAILED_REQ=$((TOTAL_REQ - SUCCESS_REQ))
+        
+        if [ "$TOTAL_REQ" -gt 0 ]; then
+            SUCCESS_RATE=$(awk "BEGIN {printf \"%.2f\", ($SUCCESS_REQ/$TOTAL_REQ)*100}")
+            THROUGHPUT=$(awk "BEGIN {printf \"%.2f\", $TOTAL_REQ/$ACTUAL_DURATION}")
+        else
+            SUCCESS_RATE="0.00"
+            THROUGHPUT="0.00"
+        fi
+        
+        # Calculate latency percentiles
+        if [ -s "$LATENCY_FILE" ]; then
+            sort -n "$LATENCY_FILE" > "${LATENCY_FILE}.sorted"
+            
+            MIN_LAT=$(head -1 "${LATENCY_FILE}.sorted")
+            MAX_LAT=$(tail -1 "${LATENCY_FILE}.sorted")
+            AVG_LAT=$(awk '{sum+=$1; count++} END {if(count>0) printf "%.2f", sum/count; else print "0"}' "${LATENCY_FILE}.sorted")
+            
+            TOTAL_SAMPLES=$(wc -l < "${LATENCY_FILE}.sorted")
+            
+            # P50 (median)
+            P50_INDEX=$(awk "BEGIN {printf \"%.0f\", $TOTAL_SAMPLES * 0.50}")
+            if [ "$P50_INDEX" -lt 1 ]; then P50_INDEX=1; fi
+            P50_LAT=$(sed -n "${P50_INDEX}p" "${LATENCY_FILE}.sorted")
+            
+            # P95
+            P95_INDEX=$(awk "BEGIN {printf \"%.0f\", $TOTAL_SAMPLES * 0.95}")
+            if [ "$P95_INDEX" -lt 1 ]; then P95_INDEX=1; fi
+            P95_LAT=$(sed -n "${P95_INDEX}p" "${LATENCY_FILE}.sorted")
+            
+            # P99
+            P99_INDEX=$(awk "BEGIN {printf \"%.0f\", $TOTAL_SAMPLES * 0.99}")
+            if [ "$P99_INDEX" -lt 1 ]; then P99_INDEX=1; fi
+            P99_LAT=$(sed -n "${P99_INDEX}p" "${LATENCY_FILE}.sorted")
+            
+            rm -f "${LATENCY_FILE}.sorted"
+        else
+            MIN_LAT=0; MAX_LAT=0; AVG_LAT=0; P50_LAT=0; P95_LAT=0; P99_LAT=0
+        fi
+        
+        # Display metrics
+        echo -e "${GREEN}✓ Test completed (Round ${ROUND}, Load ${LOAD_LEVEL})${NC}"
+        echo -e "${CYAN}Results:${NC}"
+        echo "  Load Level:          ${LOAD_LEVEL} concurrent users"
+        echo "  Total Requests:      $TOTAL_REQ"
+        echo "  Successful:          $SUCCESS_REQ"
+        echo "  Failed:              $FAILED_REQ"
+        echo "  Success Rate:        ${SUCCESS_RATE}%"
+        echo -e "${MAGENTA}  Latency (min/avg/max): ${MIN_LAT}ms / ${AVG_LAT}ms / ${MAX_LAT}ms${NC}"
+        echo -e "${MAGENTA}  Latency (p50/p95/p99): ${P50_LAT}ms / ${P95_LAT}ms / ${P99_LAT}ms${NC}"
+        echo -e "${BLUE}  Throughput:          ${THROUGHPUT} req/s${NC}"
+        echo "  Actual Duration:     ${ACTUAL_DURATION}s"
+        
+        # Save summary to log
+        echo "" >> "$LOG_FILE"
+        echo "=== Test Summary ===" >> "$LOG_FILE"
+        echo "Round: ${ROUND}" >> "$LOG_FILE"
+        echo "Load Level: ${LOAD_LEVEL} concurrent users" >> "$LOG_FILE"
+        echo "Total Requests: $TOTAL_REQ" >> "$LOG_FILE"
+        echo "Successful: $SUCCESS_REQ" >> "$LOG_FILE"
+        echo "Failed: $FAILED_REQ" >> "$LOG_FILE"
+        echo "Success Rate: ${SUCCESS_RATE}%" >> "$LOG_FILE"
+        echo "Throughput: ${THROUGHPUT} req/s" >> "$LOG_FILE"
+        echo "Latency (min/avg/max): ${MIN_LAT}/${AVG_LAT}/${MAX_LAT}ms" >> "$LOG_FILE"
+        echo "Latency (p50/p95/p99): ${P50_LAT}/${P95_LAT}/${P99_LAT}ms" >> "$LOG_FILE"
+        echo "End time: ${TEST_END}" >> "$LOG_FILE"
+        
+        # Append to CSV with all latency metrics
+        echo "$(date -u +"%Y-%m-%d %H:%M:%S"),${ROUND},${LOAD_LEVEL},${ACTUAL_DURATION},${TOTAL_REQ},${SUCCESS_REQ},${FAILED_REQ},${SUCCESS_RATE},${MIN_LAT},${AVG_LAT},${MAX_LAT},${P50_LAT},${P95_LAT},${P99_LAT},${THROUGHPUT},${TEST_START},${TEST_END}" >> "$CSV_FILE"
+        
+        echo -e "${GREEN}✓ Results appended to CSV${NC}"
+        
+        # Short cooldown between load levels within a round
+        LAST_LOAD_LEVEL=${LOAD_LEVELS[${#LOAD_LEVELS[@]}-1]}
+        if [ "$LOAD_LEVEL" != "$LAST_LOAD_LEVEL" ]; then
+            COOLDOWN_TIME=10
+            echo -e "${MAGENTA}→ Cooldown: Waiting ${COOLDOWN_TIME}s before next load level...${NC}"
+            sleep $COOLDOWN_TIME
+            echo ""
         fi
     done
     
-    # Wait for all workers to finish
-    wait
-    
-    echo ""
-    
-    TEST_END_EPOCH=$(date +%s)
-    TEST_END=$(date -u +"%Y-%m-%d %H:%M:%S")
-    ACTUAL_DURATION=$((TEST_END_EPOCH - TEST_START_EPOCH))
-    
-    # Calculate metrics from results
-    TOTAL_REQ=$(wc -l < "$RESULTS_FILE" 2>/dev/null || echo 0)
-    SUCCESS_REQ=$(grep -c "SUCCESS" "$RESULTS_FILE" 2>/dev/null || echo 0)
-    FAILED_REQ=$((TOTAL_REQ - SUCCESS_REQ))
-    
-    if [ "$TOTAL_REQ" -gt 0 ]; then
-        SUCCESS_RATE=$(awk "BEGIN {printf \"%.2f\", ($SUCCESS_REQ/$TOTAL_REQ)*100}")
-        THROUGHPUT=$(awk "BEGIN {printf \"%.2f\", $TOTAL_REQ/$ACTUAL_DURATION}")
-    else
-        SUCCESS_RATE="0.00"
-        THROUGHPUT="0.00"
-    fi
-    
-    # Calculate latency percentiles
-    if [ -s "$LATENCY_FILE" ]; then
-        sort -n "$LATENCY_FILE" > "${LATENCY_FILE}.sorted"
-        
-        MIN_LAT=$(head -1 "${LATENCY_FILE}.sorted")
-        MAX_LAT=$(tail -1 "${LATENCY_FILE}.sorted")
-        AVG_LAT=$(awk '{sum+=$1; count++} END {if(count>0) printf "%.2f", sum/count; else print "0"}' "${LATENCY_FILE}.sorted")
-        
-        TOTAL_SAMPLES=$(wc -l < "${LATENCY_FILE}.sorted")
-        
-        # P50 (median)
-        P50_INDEX=$(awk "BEGIN {printf \"%.0f\", $TOTAL_SAMPLES * 0.50}")
-        if [ "$P50_INDEX" -lt 1 ]; then P50_INDEX=1; fi
-        P50_LAT=$(sed -n "${P50_INDEX}p" "${LATENCY_FILE}.sorted")
-        
-        # P95
-        P95_INDEX=$(awk "BEGIN {printf \"%.0f\", $TOTAL_SAMPLES * 0.95}")
-        if [ "$P95_INDEX" -lt 1 ]; then P95_INDEX=1; fi
-        P95_LAT=$(sed -n "${P95_INDEX}p" "${LATENCY_FILE}.sorted")
-        
-        # P99
-        P99_INDEX=$(awk "BEGIN {printf \"%.0f\", $TOTAL_SAMPLES * 0.99}")
-        if [ "$P99_INDEX" -lt 1 ]; then P99_INDEX=1; fi
-        P99_LAT=$(sed -n "${P99_INDEX}p" "${LATENCY_FILE}.sorted")
-        
-        rm -f "${LATENCY_FILE}.sorted"
-    else
-        MIN_LAT=0; MAX_LAT=0; AVG_LAT=0; P50_LAT=0; P95_LAT=0; P99_LAT=0
-    fi
-    
-    # Display metrics
-    echo -e "${GREEN}✓ Session ${SESSION_NUMBER} completed${NC}"
-    echo -e "${CYAN}Results:${NC}"
-    echo "  Worker Range:        ${MIN_WORKERS} → ${MAX_WORKERS} (peak: ${CURRENT_WORKERS})"
-    echo "  Total Requests:      $TOTAL_REQ"
-    echo "  Successful:          $SUCCESS_REQ"
-    echo "  Failed:              $FAILED_REQ"
-    echo "  Success Rate:        ${SUCCESS_RATE}%"
-    echo -e "${MAGENTA}  Latency (min/avg/max): ${MIN_LAT}ms / ${AVG_LAT}ms / ${MAX_LAT}ms${NC}"
-    echo -e "${MAGENTA}  Latency (p50/p95/p99): ${P50_LAT}ms / ${P95_LAT}ms / ${P99_LAT}ms${NC}"
-    echo -e "${BLUE}  Throughput:          ${THROUGHPUT} req/s${NC}"
-    echo "  Actual Duration:     ${ACTUAL_DURATION}s"
-    
-    # Save summary to log
-    echo "" >> "$LOG_FILE"
-    echo "=== Session ${SESSION_NUMBER} Summary ===" >> "$LOG_FILE"
-    echo "Worker Range: ${MIN_WORKERS} → ${MAX_WORKERS}" >> "$LOG_FILE"
-    echo "Total Requests: $TOTAL_REQ" >> "$LOG_FILE"
-    echo "Successful: $SUCCESS_REQ" >> "$LOG_FILE"
-    echo "Failed: $FAILED_REQ" >> "$LOG_FILE"
-    echo "Success Rate: ${SUCCESS_RATE}%" >> "$LOG_FILE"
-    echo "Throughput: ${THROUGHPUT} req/s" >> "$LOG_FILE"
-    echo "Latency (min/avg/max): ${MIN_LAT}/${AVG_LAT}/${MAX_LAT}ms" >> "$LOG_FILE"
-    echo "Latency (p50/p95/p99): ${P50_LAT}/${P95_LAT}/${P99_LAT}ms" >> "$LOG_FILE"
-    echo "End time: ${TEST_END}" >> "$LOG_FILE"
-    
-    # Append to CSV with all latency metrics
-    echo "$(date -u +"%Y-%m-%d %H:%M:%S"),${SESSION_NUMBER},${MIN_WORKERS}-${MAX_WORKERS},${ACTUAL_DURATION},${TOTAL_REQ},${SUCCESS_REQ},${FAILED_REQ},${SUCCESS_RATE},${MIN_LAT},${AVG_LAT},${MAX_LAT},${P50_LAT},${P95_LAT},${P99_LAT},${THROUGHPUT},${TEST_START},${TEST_END}" >> "$CSV_FILE"
-    
-    echo -e "${GREEN}✓ Results appended to CSV${NC}"
-    
-    # Cooldown between sessions
-    if [ $SESSION_NUMBER -lt $TOTAL_SESSIONS ]; then
-        COOLDOWN_TIME=15
-        echo -e "${MAGENTA}→ Cooldown: Waiting ${COOLDOWN_TIME}s for system to stabilize...${NC}"
-        sleep $COOLDOWN_TIME
+    # Longer cooldown between rounds for system stabilization
+    if [ $ROUND -lt $NUM_ROUNDS ]; then
+        ROUND_COOLDOWN=20
+        echo -e "${CYAN}╔═══════════════════════════════════════════════════════════════╗${NC}"
+        echo -e "${CYAN}║  Round ${ROUND} Complete - Stabilizing system before Round $((ROUND + 1))     ║${NC}"
+        echo -e "${CYAN}╚═══════════════════════════════════════════════════════════════╝${NC}"
+        echo -e "${MAGENTA}→ Inter-round cooldown: Waiting ${ROUND_COOLDOWN}s for full system stabilization...${NC}"
+        sleep $ROUND_COOLDOWN
         echo ""
     fi
 done
@@ -297,10 +297,10 @@ done
 # ═══════════════════════════════════════════════════════════════════
 echo ""
 echo -e "${CYAN}╔════════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${CYAN}║                  TEST SUITE COMPLETED                          ║${NC}"
+echo -e "${CYAN}║              MULTI-ROUND LOAD TEST COMPLETED                   ║${NC}"
 echo -e "${CYAN}╚════════════════════════════════════════════════════════════════╝${NC}"
 echo ""
-echo -e "${GREEN}✓ All ${TOTAL_SESSIONS} sessions completed${NC}"
+echo -e "${GREEN}✓ Completed ${NUM_ROUNDS} rounds with ${#LOAD_LEVELS[@]} load levels each (Total: ${TOTAL_TESTS} tests)${NC}"
 echo -e "${YELLOW}Results Directory:${NC} $LOG_DIR"
 echo -e "${YELLOW}CSV Results:${NC} $CSV_FILE"
 echo ""
@@ -319,14 +319,25 @@ if [ -f "$CSV_FILE" ]; then
     AVG_P95=$(awk -F',' 'NR>1 {sum+=$13; count++} END {if(count>0) printf "%.2f", sum/count; else print "0"}' "$CSV_FILE")
     AVG_P99=$(awk -F',' 'NR>1 {sum+=$14; count++} END {if(count>0) printf "%.2f", sum/count; else print "0"}' "$CSV_FILE")
     
+    echo "  Total Tests Run:     ${TOTAL_TESTS}"
     echo "  Total Requests:      ${TOTAL_REQUESTS}"
     echo "  Total Successful:    ${TOTAL_SUCCESS}"
     echo "  Total Failed:        ${TOTAL_FAILED}"
     echo "  Average Success Rate: ${AVG_SUCCESS_RATE}%"
     echo -e "${MAGENTA}  Average Throughput:   ${AVG_THROUGHPUT} req/s${NC}"
     echo -e "${MAGENTA}  Average Latency (p50/p95/p99): ${AVG_P50}ms / ${AVG_P95}ms / ${AVG_P99}ms${NC}"
+    
+    # Show statistics by load level
+    echo ""
+    echo -e "${BLUE}  Performance by Load Level (averaged across all rounds):${NC}"
+    for LOAD_LEVEL in "${LOAD_LEVELS[@]}"; do
+        LOAD_AVG_THROUGHPUT=$(awk -F',' -v load="$LOAD_LEVEL" 'NR>1 && $3==load {sum+=$15; count++} END {if(count>0) printf "%.2f", sum/count; else print "0"}' "$CSV_FILE")
+        LOAD_AVG_P95=$(awk -F',' -v load="$LOAD_LEVEL" 'NR>1 && $3==load {sum+=$13; count++} END {if(count>0) printf "%.2f", sum/count; else print "0"}' "$CSV_FILE")
+        LOAD_SUCCESS_RATE=$(awk -F',' -v load="$LOAD_LEVEL" 'NR>1 && $3==load {sum+=$8; count++} END {if(count>0) printf "%.2f", sum/count; else print "0"}' "$CSV_FILE")
+        echo "    Load ${LOAD_LEVEL}: ${LOAD_AVG_THROUGHPUT} req/s | P95: ${LOAD_AVG_P95}ms | Success: ${LOAD_SUCCESS_RATE}%"
+    done
 fi
 
 echo ""
-echo -e "${GREEN}✓ Enhanced concurrent stress test completed successfully!${NC}"
+echo -e "${GREEN}✓ Multi-round sequential load test completed successfully!${NC}"
 echo ""
