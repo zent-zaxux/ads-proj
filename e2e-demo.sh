@@ -312,11 +312,19 @@ FULFILL_HEALTH=$(curl -s "${BASE_URL}/api/agent/fulfillment/health" 2>/dev/null)
 if echo "$FULFILL_HEALTH" | grep -q '"status":"UP"'; then
     echo -e "${GREEN}✓ UP${NC}"
     
-    # Check if it's running and start if needed
+    # Check if it's running and start if needed with optimized settings
     FULFILL_STATUS=$(curl -s "${BASE_URL}/api/agent/fulfillment/status" | jq -r '.status' 2>/dev/null || echo "UNKNOWN")
     if [ "$FULFILL_STATUS" != "RUNNING" ]; then
-        echo -e "  ${YELLOW}⚠ Starting Fulfillment Agent...${NC}"
-        curl -s -X POST "${BASE_URL}/api/agent/fulfillment/start" > /dev/null
+        echo -e "  ${YELLOW}⚠ Starting Fulfillment Agent with optimized settings...${NC}"
+        curl -s -X POST "${BASE_URL}/api/agent/fulfillment/start?processingDelayMs=100&batchSize=50&pollingIntervalSeconds=1" > /dev/null
+        echo -e "  ${GREEN}✓ Fulfillment Agent started (100ms delay, batch 50, poll 1s)${NC}"
+    else
+        echo -e "  ${GREEN}✓ Fulfillment Agent is already running${NC}"
+        # Show current configuration
+        FULFILL_DETAILS=$(curl -s "${BASE_URL}/api/agent/fulfillment/status" 2>/dev/null)
+        BATCH_SIZE=$(echo "$FULFILL_DETAILS" | jq -r '.batchSize' 2>/dev/null || echo "unknown")
+        DELAY=$(echo "$FULFILL_DETAILS" | jq -r '.processingDelayMs' 2>/dev/null || echo "unknown")
+        echo -e "  ${CYAN}  Config: ${DELAY}ms delay, batch ${BATCH_SIZE}${NC}"
     fi
 else
     echo -e "${YELLOW}⚠ Not available${NC}"
@@ -327,8 +335,18 @@ echo ""
 INITIAL_STATS=$(curl -s "${BASE_URL}/api/orders?page=0&size=1" 2>/dev/null)
 INITIAL_ORDERS=$(echo "$INITIAL_STATS" | jq -r '.totalElements // 0' 2>/dev/null || echo "0")
 
+# Get initial fulfillment stats
+INITIAL_FULFILL=$(curl -s "${BASE_URL}/api/agent/fulfillment/status" 2>/dev/null)
+INITIAL_PROCESSED=$(echo "$INITIAL_FULFILL" | jq -r '.totalProcessed // 0' 2>/dev/null || echo "0")
+INITIAL_DELIVERED=$(echo "$INITIAL_FULFILL" | jq -r '.ordersDelivered // 0' 2>/dev/null || echo "0")
+INITIAL_BACKLOG=$(echo "$INITIAL_FULFILL" | jq -r '.currentBacklog // 0' 2>/dev/null || echo "0")
+
 echo -e "${CYAN}📊 Initial Statistics:${NC}"
 echo "  Total Orders: $INITIAL_ORDERS"
+echo "  Fulfillment Agent:"
+echo "    - Total Processed: $INITIAL_PROCESSED"
+echo "    - Orders Delivered: $INITIAL_DELIVERED"
+echo "    - Current Backlog: $INITIAL_BACKLOG"
 echo ""
 
 # Start Traffic Agent with STEADY pattern
@@ -348,14 +366,34 @@ fi
 echo ""
 
 # Monitor for 15 seconds
-echo -e "${CYAN}⏳ Monitoring autonomous order generation for 15 seconds...${NC}"
+echo -e "${CYAN}⏳ Monitoring autonomous order generation AND fulfillment for 15 seconds...${NC}"
+echo -e "${BLUE}  Traffic Agent: Creating orders | Fulfillment Agent: Processing orders${NC}"
+echo ""
 for i in {1..3}; do
     sleep 5
+    
+    # Get order stats
     CURRENT_STATS=$(curl -s "${BASE_URL}/api/orders?page=0&size=1" 2>/dev/null)
     CURRENT_ORDERS=$(echo "$CURRENT_STATS" | jq -r '.totalElements // 0' 2>/dev/null || echo "0")
     ORDERS_GENERATED=$((CURRENT_ORDERS - INITIAL_ORDERS))
     
-    printf "  [${i}5s] Total Orders: ${CURRENT_ORDERS} | Generated: ${ORDERS_GENERATED}\r"
+    # Get fulfillment stats
+    CURRENT_FULFILL=$(curl -s "${BASE_URL}/api/agent/fulfillment/status" 2>/dev/null)
+    CURRENT_PROCESSED=$(echo "$CURRENT_FULFILL" | jq -r '.totalProcessed // 0' 2>/dev/null || echo "0")
+    CURRENT_DELIVERED=$(echo "$CURRENT_FULFILL" | jq -r '.ordersDelivered // 0' 2>/dev/null || echo "0")
+    CURRENT_BACKLOG=$(echo "$CURRENT_FULFILL" | jq -r '.currentBacklog // 0' 2>/dev/null || echo "0")
+    
+    ORDERS_PROCESSED=$((CURRENT_PROCESSED - INITIAL_PROCESSED))
+    ORDERS_FULFILLED=$((CURRENT_DELIVERED - INITIAL_DELIVERED))
+    
+    # Calculate fulfillment rate
+    if [ "$ORDERS_GENERATED" -gt 0 ]; then
+        FULFILL_RATE=$(awk "BEGIN {printf \"%.1f\", ($ORDERS_FULFILLED/$ORDERS_GENERATED)*100}")
+    else
+        FULFILL_RATE="0.0"
+    fi
+    
+    echo -e "  ${YELLOW}[${i}5s]${NC} Created: ${GREEN}${ORDERS_GENERATED}${NC} | Fulfilled: ${CYAN}${ORDERS_FULFILLED}${NC} (${FULFILL_RATE}%) | Backlog: ${MAGENTA}${CURRENT_BACKLOG}${NC} | Processed: ${BLUE}${ORDERS_PROCESSED}${NC}"
 done
 echo ""
 
@@ -376,6 +414,27 @@ if [ -n "$AGENT_STATS" ]; then
 fi
 echo ""
 
+# Get Fulfillment Agent statistics
+echo -e "${CYAN}📈 Fulfillment Agent Statistics:${NC}"
+FULFILL_STATS=$(curl -s "${BASE_URL}/api/agent/fulfillment/status" 2>/dev/null)
+if [ -n "$FULFILL_STATS" ]; then
+    echo "$FULFILL_STATS" | jq '{
+        agentId,
+        status,
+        processingDelayMs,
+        batchSize,
+        pollingIntervalSeconds,
+        totalProcessed,
+        ordersConfirmed,
+        ordersShipped,
+        ordersDelivered,
+        ordersFailed,
+        currentBacklog,
+        avgProcessingTimeMs
+    }' 2>/dev/null || echo "$FULFILL_STATS"
+fi
+echo ""
+
 # Stop Traffic Agent
 echo -e "${CYAN}🛑 Stopping Traffic Agent...${NC}"
 AGENT_STOP=$(curl -s -X POST "${BASE_URL}/api/agent/traffic/stop" 2>/dev/null)
@@ -392,7 +451,17 @@ FINAL_STATS=$(curl -s "${BASE_URL}/api/orders?page=0&size=1" 2>/dev/null)
 FINAL_ORDERS=$(echo "$FINAL_STATS" | jq -r '.totalElements // 0' 2>/dev/null || echo "0")
 TOTAL_GENERATED=$((FINAL_ORDERS - INITIAL_ORDERS))
 
+# Final fulfillment statistics
+FINAL_FULFILL=$(curl -s "${BASE_URL}/api/agent/fulfillment/status" 2>/dev/null)
+FINAL_PROCESSED=$(echo "$FINAL_FULFILL" | jq -r '.totalProcessed // 0' 2>/dev/null || echo "0")
+FINAL_DELIVERED=$(echo "$FINAL_FULFILL" | jq -r '.ordersDelivered // 0' 2>/dev/null || echo "0")
+FINAL_BACKLOG=$(echo "$FINAL_FULFILL" | jq -r '.currentBacklog // 0' 2>/dev/null || echo "0")
+TOTAL_PROCESSED=$((FINAL_PROCESSED - INITIAL_PROCESSED))
+TOTAL_FULFILLED=$((FINAL_DELIVERED - INITIAL_DELIVERED))
+
 echo -e "${GREEN}✓ Autonomous Agent Test Results:${NC}"
+echo ""
+echo -e "${YELLOW}Traffic Agent (Order Creation):${NC}"
 echo "  Orders at start: $INITIAL_ORDERS"
 echo "  Orders at end: $FINAL_ORDERS"
 echo "  Orders generated by Traffic Agent: $TOTAL_GENERATED"
@@ -400,6 +469,21 @@ echo "  Test duration: 15 seconds"
 if [ "$TOTAL_GENERATED" -gt 0 ]; then
     RATE=$(awk "BEGIN {printf \"%.2f\", $TOTAL_GENERATED/15}")
     echo "  Average generation rate: ${RATE} orders/sec"
+fi
+echo ""
+
+echo -e "${YELLOW}Fulfillment Agent (Order Processing):${NC}"
+echo "  Orders processed: $TOTAL_PROCESSED"
+echo "  Orders delivered: $TOTAL_FULFILLED"
+echo "  Current backlog: $FINAL_BACKLOG"
+if [ "$TOTAL_GENERATED" -gt 0 ]; then
+    FULFILL_RATE=$(awk "BEGIN {printf \"%.1f\", ($TOTAL_FULFILLED/$TOTAL_GENERATED)*100}")
+    echo "  Fulfillment rate: ${FULFILL_RATE}%"
+    
+    if [ "$TOTAL_FULFILLED" -gt 0 ]; then
+        AVG_TIME=$(awk "BEGIN {printf \"%.2f\", 15/$TOTAL_FULFILLED}")
+        echo "  Average time per order: ${AVG_TIME}s"
+    fi
 fi
 echo ""
 
@@ -469,6 +553,11 @@ echo "  ✓ Published Kafka event to order-events topic"
 echo "  ✓ Payment service consumed event and processed payment"
 echo "  ✓ Notification service consumed event and sent notifications"
 echo "  ✓ Traffic Agent autonomously generated $TOTAL_GENERATED orders"
+echo "  ✓ Fulfillment Agent autonomously processed $TOTAL_FULFILLED orders"
+if [ "$TOTAL_GENERATED" -gt 0 ]; then
+    FULFILL_RATE=$(awk "BEGIN {printf \"%.1f\", ($TOTAL_FULFILLED/$TOTAL_GENERATED)*100}")
+    echo "  ✓ Fulfillment rate: ${FULFILL_RATE}% (target: 95%+)"
+fi
 echo "  ✓ All data persisted across microservices"
 echo ""
 
