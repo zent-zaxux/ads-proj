@@ -58,3 +58,16 @@ Thumbs.db
 ### Temporary Files ###
 *.tmp
 *.temp
+
+### Test Results (regeneratable) ###
+test-logs/
+baseline_test_*/
+concurrent-test-logs/
+experiments/
+logs:csv/
+
+### Config Backups ###
+config_backup_*/
+
+### Duplicate Config ###
+/application.properties

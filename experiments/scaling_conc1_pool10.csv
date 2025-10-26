@@ -1,1 +1,0 @@
-timestamp,session_number,user_range,duration_seconds,total_requests,successful_requests,failed_requests,success_rate_percent,avg_latency_ms,throughput_req_per_sec,test_start_time,test_end_time
