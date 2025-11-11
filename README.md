@@ -283,7 +283,7 @@ Complete demonstration of the Kafka-based distributed system flow:
 **Recent fixes (Nov 11, 2024):**
 - 🔧 Fixed fulfillment rate calculation: Now uses database queries instead of cumulative agent counters
 - 🔧 Database cleanup: Properly resets before each test for accurate metrics
-- 🔧 Result: Fulfillment rate now accurately shows ~100% (was incorrectly showing 300%)
+- 🔧 Result: Fulfillment rate now accurately shows ~100%
 
 **Recent optimizations (Oct 26, 2025):**
 - 🚀 Fulfillment Agent optimized: 100ms delay (was 2000ms) - **20x faster**
@@ -617,7 +617,7 @@ The system implements **8 major fault tolerance mechanisms** to ensure resilienc
 ### 3. Connection Pooling (HikariCP)
 - **Feature**: Robust database connection pool with automatic validation
 - **Benefit**: Fast recovery from DB failures, connection leak prevention
-- **Configuration**: 10 min, 50 max connections, 5s validation timeout
+- **Configuration**: 10 min, 20 max connections, 5s validation timeout
 
 ### 4. Kafka Consumer Groups & Auto-Retry
 - **Feature**: Spring Kafka with automatic retry (3 attempts × 1s backoff)
@@ -772,10 +772,10 @@ See `docs/FAULT_TOLERANCE_REPORT.md` and `docs/FAULT_TOLERANCE_FEATURES.md` for 
 - ✅ **Fault Tolerance**: 8+ resilience features (retry, connection pooling, health checks)
 - ✅ **Autonomous Agents**: 
   - Traffic Agent with 5 patterns (STEADY, BURST, SPIKE, RAMP_UP, RANDOM)
-  - Fulfillment Agent for autonomous order processing (optimized: 100ms delay, batch 50, poll 1s)
+  - Fulfillment Agent for autonomous order processing (optimized: 10ms delay, batch 100, poll 1s)
 - ✅ **Comprehensive Testing**: Autonomous stress testing, fault injection, fulfillment accuracy validation
 - ✅ **Metrics & Monitoring**: Spring Actuator + Kafka-based event publishing
-- ✅ **Database Integration**: PostgreSQL with HikariCP connection pooling (10-50 connections)
+- ✅ **Database Integration**: PostgreSQL with HikariCP connection pooling (10-20 connections)
 - ✅ **Full Containerization**: Docker Compose orchestration with health checks
 
 ### Demonstrated Capabilities
@@ -841,7 +841,7 @@ Current system performance (demonstrated metrics):
 - **Recovery Mechanism**: Automatic (Spring Kafka retry, HikariCP reconnection, Docker restart)
 
 **Scalability:**
-- **Database Connections**: HikariCP pool with 10 min, 50 max connections
+- **Database Connections**: HikariCP pool with 10 min, 20 max connections
 - **Async Thread Pool**: 10 core, 50 max threads (LoadGen- prefix)
 - **Connection Validation**: 5s timeout for automatic recovery
 
@@ -920,7 +920,7 @@ Current system performance (demonstrated metrics):
 - **Production**: PostgreSQL 17 on port 5432
 - **Connection Pool**: HikariCP with optimized settings
   - Minimum Idle: 10 connections
-  - Maximum Pool Size: 50 connections
+  - Maximum Pool Size: 20 connections
   - Connection Timeout: 30 seconds
   - Idle Timeout: 600 seconds
 
@@ -951,11 +951,11 @@ Current system performance (demonstrated metrics):
 - Patterns: STEADY, BURST, SPIKE, RAMP_UP, RANDOM
 - Configurable via REST API
 
-**Fulfillment Agent Defaults (Optimized):**
-- Processing delay: 100ms
-- Batch size: 50 orders
+**Fulfillment Agent Defaults (Highly Optimized):**
+- Processing delay: 10ms (ultra-fast processing)
+- Batch size: 100 orders (large batches)
 - Polling interval: 1 second
-- Parallel threads: 8
+- Parallel threads: 16
 
 ### Monitoring & Observability
 
