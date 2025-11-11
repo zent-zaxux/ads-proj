@@ -2,9 +2,10 @@ package com.umu.ads_proj.event;
 
 import com.fasterxml.jackson.annotation.JsonFormat;
 import java.time.LocalDateTime;
+import java.util.UUID;
 
 /**
- * Base event class for all Kafka events
+ * Base event class for all Kafka events with idempotency support
  */
 public abstract class BaseEvent {
     
@@ -18,17 +19,13 @@ public abstract class BaseEvent {
     
     protected BaseEvent() {
         this.timestamp = LocalDateTime.now();
+        this.eventId = UUID.randomUUID().toString();
     }
     
     protected BaseEvent(String eventType, String serviceSource) {
         this();
         this.eventType = eventType;
         this.serviceSource = serviceSource;
-        this.eventId = generateEventId();
-    }
-    
-    private String generateEventId() {
-        return eventType + "-" + System.currentTimeMillis() + "-" + hashCode();
     }
     
     // Getters and Setters

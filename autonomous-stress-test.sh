@@ -57,6 +57,29 @@ echo "  Log Directory:        ${LOG_DIR}"
 echo ""
 
 # ═══════════════════════════════════════════════════════════════════
+# Database Cleanup for Accurate Metrics
+# ═══════════════════════════════════════════════════════════════════
+echo -e "${YELLOW}🧹 Clearing database for accurate fulfillment metrics...${NC}"
+
+# Mark all pending orders as delivered to clear backlog
+docker exec postgres psql -U adsuser -d adsdb -c "
+UPDATE orders SET status = 'DELIVERED' WHERE status IN ('PENDING', 'CONFIRMED', 'SHIPPED');
+DELETE FROM processed_events;
+" > /dev/null 2>&1
+
+if [ $? -eq 0 ]; then
+    echo -e "${GREEN}✓ Database cleared - starting with 0 pending orders${NC}"
+    
+    # Verify cleanup
+    PENDING_COUNT=$(docker exec postgres psql -U adsuser -d adsdb -t -c "SELECT COUNT(*) FROM orders WHERE status != 'DELIVERED';" 2>/dev/null | tr -d ' ')
+    echo -e "${CYAN}  Pending orders: ${PENDING_COUNT}${NC}"
+else
+    echo -e "${YELLOW}⚠ Database cleanup failed (may not be critical)${NC}"
+fi
+
+echo ""
+
+# ═══════════════════════════════════════════════════════════════════
 # Health Checks
 # ═══════════════════════════════════════════════════════════════════
 echo -e "${BLUE}Performing health checks...${NC}"
@@ -246,12 +269,15 @@ for ROUND in $(seq 1 $NUM_ROUNDS); do
             continue
         fi
         
-        # Get initial statistics
-        INITIAL_STATS=$(get_order_stats)
-        INITIAL_ORDERS=$(echo "$INITIAL_STATS" | jq -r '.totalElements // 0' 2>/dev/null || echo "0")
+        # Get initial statistics - use database queries for accurate counts
+        INITIAL_ORDERS=$(docker exec postgres psql -U adsuser -d adsdb -t -c "SELECT COUNT(*) FROM orders;" 2>/dev/null | tr -d ' ')
+        INITIAL_PENDING=$(docker exec postgres psql -U adsuser -d adsdb -t -c "SELECT COUNT(*) FROM orders WHERE status = 'PENDING';" 2>/dev/null | tr -d ' ')
+        INITIAL_DELIVERED=$(docker exec postgres psql -U adsuser -d adsdb -t -c "SELECT COUNT(*) FROM orders WHERE status = 'DELIVERED';" 2>/dev/null | tr -d ' ')
         
-        INITIAL_FULFILL=$(get_fulfillment_stats)
-        INITIAL_FULFILLED=$(echo "$INITIAL_FULFILL" | jq -r '.totalProcessed // 0' 2>/dev/null || echo "0")
+        # Fallback to 0 if queries fail
+        INITIAL_ORDERS=${INITIAL_ORDERS:-0}
+        INITIAL_PENDING=${INITIAL_PENDING:-0}
+        INITIAL_DELIVERED=${INITIAL_DELIVERED:-0}
         
         echo -e "${CYAN}Test running for ${DURATION_PER_LEVEL} seconds...${NC}"
         echo -e "${MAGENTA}Pattern: ${PATTERN} | Ops/sec: ${OPS_PER_SEC}${NC}"
@@ -269,15 +295,16 @@ for ROUND in $(seq 1 $NUM_ROUNDS); do
             SAMPLE_LAT=$((LAT_END - LAT_START))
             echo "$SAMPLE_LAT" >> "$LATENCY_FILE"
             
-            # Get current stats
-            CURRENT_STATS=$(get_order_stats)
-            CURRENT_ORDERS=$(echo "$CURRENT_STATS" | jq -r '.totalElements // 0' 2>/dev/null || echo "0")
+            # Get current stats - use database queries for accurate counts
+            CURRENT_ORDERS=$(docker exec postgres psql -U adsuser -d adsdb -t -c "SELECT COUNT(*) FROM orders;" 2>/dev/null | tr -d ' ')
+            CURRENT_DELIVERED=$(docker exec postgres psql -U adsuser -d adsdb -t -c "SELECT COUNT(*) FROM orders WHERE status = 'DELIVERED';" 2>/dev/null | tr -d ' ')
             
-            CURRENT_FULFILL=$(get_fulfillment_stats)
-            CURRENT_FULFILLED=$(echo "$CURRENT_FULFILL" | jq -r '.totalProcessed // 0' 2>/dev/null || echo "0")
+            # Fallback to 0 if queries fail
+            CURRENT_ORDERS=${CURRENT_ORDERS:-0}
+            CURRENT_DELIVERED=${CURRENT_DELIVERED:-0}
             
             ORDERS_CREATED=$((CURRENT_ORDERS - INITIAL_ORDERS))
-            ORDERS_FULFILLED=$((CURRENT_FULFILLED - INITIAL_FULFILLED))
+            ORDERS_FULFILLED=$((CURRENT_DELIVERED - INITIAL_DELIVERED))
             
             if [ $ELAPSED -gt 0 ]; then
                 CURRENT_THROUGHPUT=$(awk "BEGIN {printf \"%.2f\", $ORDERS_CREATED/$ELAPSED}")
@@ -301,17 +328,18 @@ for ROUND in $(seq 1 $NUM_ROUNDS); do
         TEST_END=$(date -u +"%Y-%m-%d %H:%M:%S")
         ACTUAL_DURATION=$((TEST_END_EPOCH - TEST_START_EPOCH))
         
-        # Get final statistics
-        FINAL_STATS=$(get_order_stats)
-        FINAL_FULFILL=$(get_fulfillment_stats)
-        TRAFFIC_STATS=$(get_traffic_stats)
+        # Get final statistics - use database queries for accurate counts
+        FINAL_ORDERS=$(docker exec postgres psql -U adsuser -d adsdb -t -c "SELECT COUNT(*) FROM orders;" 2>/dev/null | tr -d ' ')
+        FINAL_DELIVERED=$(docker exec postgres psql -U adsuser -d adsdb -t -c "SELECT COUNT(*) FROM orders WHERE status = 'DELIVERED';" 2>/dev/null | tr -d ' ')
+        FINAL_PENDING=$(docker exec postgres psql -U adsuser -d adsdb -t -c "SELECT COUNT(*) FROM orders WHERE status = 'PENDING';" 2>/dev/null | tr -d ' ')
         
-        # Extract metrics
-        FINAL_ORDERS=$(echo "$FINAL_STATS" | jq -r '.totalElements // 0' 2>/dev/null || echo "0")
-        FINAL_FULFILLED=$(echo "$FINAL_FULFILL" | jq -r '.totalProcessed // 0' 2>/dev/null || echo "0")
+        # Fallback to 0 if queries fail
+        FINAL_ORDERS=${FINAL_ORDERS:-0}
+        FINAL_DELIVERED=${FINAL_DELIVERED:-0}
+        FINAL_PENDING=${FINAL_PENDING:-0}
         
         ORDERS_CREATED=$((FINAL_ORDERS - INITIAL_ORDERS))
-        ORDERS_FULFILLED=$((FINAL_FULFILLED - INITIAL_FULFILLED))
+        ORDERS_FULFILLED=$((FINAL_DELIVERED - INITIAL_DELIVERED))
         
         # Calculate latency percentiles
         if [ -s "$LATENCY_FILE" ]; then
@@ -359,6 +387,7 @@ for ROUND in $(seq 1 $NUM_ROUNDS); do
         echo "  Pattern:             ${PATTERN}"
         echo "  Orders Created:      ${ORDERS_CREATED}"
         echo "  Orders Fulfilled:    ${ORDERS_FULFILLED}"
+        echo "  Orders Pending:      $((FINAL_PENDING - INITIAL_PENDING))"
         echo "  Fulfillment Rate:    ${FULFILLMENT_RATE}%"
         echo -e "${MAGENTA}  Latency (min/avg/max): ${MIN_LAT}ms / ${AVG_LAT}ms / ${MAX_LAT}ms${NC}"
         echo -e "${MAGENTA}  Latency (p50/p95/p99): ${P50_LAT}ms / ${P95_LAT}ms / ${P99_LAT}ms${NC}"

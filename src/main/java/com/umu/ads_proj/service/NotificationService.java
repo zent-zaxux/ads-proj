@@ -8,6 +8,7 @@ import com.umu.ads_proj.entity.Order;
 import com.umu.ads_proj.entity.User;
 import com.umu.ads_proj.event.NotificationEvent;
 import com.umu.ads_proj.event.OrderEvent;
+import com.umu.ads_proj.event.PaymentEvent;
 import com.umu.ads_proj.repository.NotificationRepository;
 import com.umu.ads_proj.repository.OrderRepository;
 import com.umu.ads_proj.repository.UserRepository;
@@ -148,6 +149,176 @@ public class NotificationService {
         notification = notificationRepository.save(notification);
         
         return notification;
+    }
+    
+    /**
+     * Process payment event and send notification with idempotency check
+     * Handles both successful and failed payment events
+     * 
+     * @param paymentEvent The payment event from Kafka
+     * @return Notification if sent, null if duplicate or non-notifiable action
+     */
+    @Transactional
+    @Timed(value = "notification.process.payment.event", description = "Time taken to process payment event")
+    public Notification processPaymentEvent(PaymentEvent paymentEvent) {
+        String eventId = paymentEvent.getEventId();
+        
+        logger.info("Processing payment event: {} (EventID: {})", paymentEvent.getAction(), eventId);
+        
+        // IDEMPOTENCY CHECK: Has this event been processed before?
+        if (notificationRepository.existsByProcessedEventId(eventId)) {
+            logger.warn("IDEMPOTENCY: Event {} already processed. Skipping notification.", eventId);
+            
+            // Publish skipped event
+            NotificationEvent skippedEvent = NotificationEvent.notificationSkipped(
+                    paymentEvent.getOrderId(),
+                    paymentEvent.getUserId(),
+                    paymentEvent.getAction().name(),
+                    eventId
+            );
+            eventPublisherService.publishNotificationEvent(skippedEvent);
+            
+            return null;
+        }
+        
+        // Only process COMPLETED and FAILED payment actions
+        if (paymentEvent.getAction() != PaymentEvent.PaymentAction.PAYMENT_COMPLETED && 
+            paymentEvent.getAction() != PaymentEvent.PaymentAction.PAYMENT_FAILED) {
+            logger.debug("Payment action {} does not require notification", paymentEvent.getAction());
+            return null;
+        }
+        
+        // Get order and user details
+        Optional<Order> orderOpt = orderRepository.findById(paymentEvent.getOrderId());
+        Optional<User> userOpt = userRepository.findById(paymentEvent.getUserId());
+        
+        if (orderOpt.isEmpty() || userOpt.isEmpty()) {
+            logger.error("Order {} or User {} not found. Cannot send notification.",
+                    paymentEvent.getOrderId(), paymentEvent.getUserId());
+            return null;
+        }
+        
+        Order order = orderOpt.get();
+        User user = userOpt.get();
+        
+        // Determine notification type based on payment action
+        NotificationType notificationType = (paymentEvent.getAction() == PaymentEvent.PaymentAction.PAYMENT_COMPLETED) 
+                ? NotificationType.PAYMENT_COMPLETED 
+                : NotificationType.PAYMENT_FAILED;
+        
+        // Create notification with event ID for idempotency
+        Notification notification = createPaymentNotification(
+                eventId,
+                order,
+                user,
+                notificationType,
+                paymentEvent
+        );
+        
+        // Save notification
+        notification = notificationRepository.save(notification);
+        logger.info("Payment notification created with ID: {} for event: {}", notification.getId(), eventId);
+        
+        // Send the notification
+        boolean success = sendNotification(notification);
+        
+        // Update notification status
+        if (success) {
+            notification.setStatus(NotificationStatus.SENT);
+            notification.setSentAt(LocalDateTime.now());
+            logger.info("Payment notification {} sent successfully", notification.getId());
+            
+            // Publish success event
+            NotificationEvent successEvent = NotificationEvent.notificationSent(
+                    notification.getId(),
+                    order.getId(),
+                    user.getId(),
+                    notificationType.name(),
+                    notification.getChannel().name(),
+                    user.getEmail()
+            );
+            eventPublisherService.publishNotificationEvent(successEvent);
+        } else {
+            notification.setStatus(NotificationStatus.FAILED);
+            notification.setRetryCount(notification.getRetryCount() + 1);
+            logger.error("Payment notification {} failed to send", notification.getId());
+            
+            // Publish failure event
+            NotificationEvent failureEvent = NotificationEvent.notificationFailed(
+                    notification.getId(),
+                    order.getId(),
+                    user.getId(),
+                    notificationType.name(),
+                    notification.getChannel().name(),
+                    notification.getErrorMessage()
+            );
+            eventPublisherService.publishNotificationEvent(failureEvent);
+        }
+        
+        notification = notificationRepository.save(notification);
+        
+        return notification;
+    }
+    
+    /**
+     * Create a payment notification object
+     */
+    private Notification createPaymentNotification(String eventId, Order order, User user,
+                                                   NotificationType type, PaymentEvent paymentEvent) {
+        Notification notification = new Notification();
+        notification.setProcessedEventId(eventId);  // IDEMPOTENCY KEY
+        notification.setOrderId(order.getId());
+        notification.setUserId(user.getId());
+        notification.setType(type);
+        notification.setChannel(NotificationChannel.EMAIL);
+        notification.setRecipientEmail(user.getEmail());
+        notification.setStatus(NotificationStatus.PENDING);
+        
+        // Generate subject and message based on payment outcome
+        Map<String, String> content = generatePaymentNotificationContent(type, order, user, paymentEvent);
+        notification.setSubject(content.get("subject"));
+        notification.setMessage(content.get("message"));
+        
+        return notification;
+    }
+    
+    /**
+     * Generate payment notification content
+     */
+    private Map<String, String> generatePaymentNotificationContent(NotificationType type, Order order, 
+                                                                   User user, PaymentEvent paymentEvent) {
+        Map<String, String> content = new HashMap<>();
+        String userName = user.getName();
+        Long orderId = order.getId();
+        String productName = order.getProductName();
+        
+        if (type == NotificationType.PAYMENT_COMPLETED) {
+            content.put("subject", "Payment Successful - Order #" + orderId);
+            content.put("message", String.format(
+                    "Dear %s,\n\nYour payment has been processed successfully!\n\n" +
+                    "Order Details:\n" +
+                    "Order ID: #%d\nProduct: %s\nAmount Paid: $%.2f\n" +
+                    "Transaction ID: %s\n\n" +
+                    "Your order will be processed and shipped soon.\n\n" +
+                    "Best regards,\nADS Proj Team",
+                    userName, orderId, productName, order.getTotalAmount(),
+                    paymentEvent.getTransactionId() != null ? paymentEvent.getTransactionId() : "N/A"
+            ));
+        } else {
+            content.put("subject", "Payment Failed - Order #" + orderId);
+            content.put("message", String.format(
+                    "Dear %s,\n\nWe're sorry, but your payment for order #%d could not be processed.\n\n" +
+                    "Order Details:\n" +
+                    "Order ID: #%d\nProduct: %s\nAmount: $%.2f\n\n" +
+                    "Reason: %s\n\n" +
+                    "Please check your payment method and try again, or contact support for assistance.\n\n" +
+                    "Best regards,\nADS Proj Team",
+                    userName, orderId, orderId, productName, order.getTotalAmount(),
+                    paymentEvent.getFailureReason() != null ? paymentEvent.getFailureReason() : "Payment declined"
+            ));
+        }
+        
+        return content;
     }
     
     /**

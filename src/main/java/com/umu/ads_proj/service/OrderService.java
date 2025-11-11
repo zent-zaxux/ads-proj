@@ -120,9 +120,9 @@ public class OrderService {
         Order updatedOrder = orderRepository.save(order);
         logger.info("Order {} status updated from {} to {}", orderId, oldStatus, newStatus);
         
-        // Publish appropriate event based on new status
+        // Publish appropriate event based on new status (async)
         OrderEvent orderEvent = createStatusChangeEvent(updatedOrder, newStatus);
-        eventPublisher.publishOrderEvent(orderEvent);
+        eventPublisher.publishOrderEventAsync(orderEvent);
         
         return updatedOrder;
     }
@@ -150,7 +150,7 @@ public class OrderService {
         Order savedOrder = orderRepository.save(existingOrder);
         logger.info("Order updated successfully with ID: {}", savedOrder.getId());
         
-        // Publish order update event
+        // Publish order update event (async)
         OrderEvent orderEvent = OrderEvent.orderUpdated(
             savedOrder.getId(),
             savedOrder.getUserId(),
@@ -159,7 +159,7 @@ public class OrderService {
             savedOrder.getTotalAmount(),
             savedOrder.getStatus().toString()
         );
-        eventPublisher.publishOrderEvent(orderEvent);
+        eventPublisher.publishOrderEventAsync(orderEvent);
         
         return savedOrder;
     }
@@ -187,7 +187,7 @@ public class OrderService {
         Order cancelledOrder = orderRepository.save(order);
         logger.info("Order cancelled successfully with ID: {}", cancelledOrder.getId());
         
-        // Publish order cancellation event
+        // Publish order cancellation event (async)
         OrderEvent orderEvent = OrderEvent.orderCancelled(
             cancelledOrder.getId(),
             cancelledOrder.getUserId(),
@@ -195,7 +195,7 @@ public class OrderService {
             cancelledOrder.getQuantity(),
             cancelledOrder.getTotalAmount()
         );
-        eventPublisher.publishOrderEvent(orderEvent);
+        eventPublisher.publishOrderEventAsync(orderEvent);
         
         return cancelledOrder;
     }

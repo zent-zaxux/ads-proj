@@ -8,15 +8,18 @@ import org.springframework.kafka.support.KafkaHeaders;
 import org.springframework.messaging.handler.annotation.Header;
 import org.springframework.messaging.handler.annotation.Payload;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import com.umu.ads_proj.entity.Payment.PaymentMethod;
+import com.umu.ads_proj.entity.ProcessedEvent;
 import com.umu.ads_proj.event.OrderEvent;
 import com.umu.ads_proj.event.PaymentEvent;
 import com.umu.ads_proj.event.PerformanceEvent;
 import com.umu.ads_proj.event.UserEvent;
+import com.umu.ads_proj.repository.ProcessedEventRepository;
 
 /**
- * Service for consuming events from Kafka topics
+ * Service for consuming events from Kafka topics with idempotency support
  */
 @Service
 public class EventConsumerService {
@@ -25,6 +28,9 @@ public class EventConsumerService {
     
     @Autowired
     private PaymentService paymentService;
+    
+    @Autowired
+    private ProcessedEventRepository processedEventRepository;
     
     /**
      * Listen to user events
@@ -82,9 +88,10 @@ public class EventConsumerService {
     }
     
     /**
-     * Listen to order events
+     * Listen to order events with idempotency
      */
     @KafkaListener(topics = "${app.kafka.topics.order-events}", groupId = "${spring.kafka.consumer.group-id}")
+    @Transactional
     public void handleOrderEvent(
             @Payload OrderEvent event,
             @Header(KafkaHeaders.RECEIVED_TOPIC) String topic,
@@ -94,17 +101,37 @@ public class EventConsumerService {
 ) {
         
         try {
+            // Check for idempotency - has this event already been processed?
+            if (event.getEventId() != null && processedEventRepository.existsByEventId(event.getEventId())) {
+                logger.info("⚠️  Duplicate event detected and skipped - EventID: {} (Order #{})", 
+                           event.getEventId(), event.getOrderId());
+                return; // Skip duplicate processing
+            }
+            
             logger.info("Received order event from topic '{}' [partition={}, offset={}]: {}", 
                        topic, partition, offset, event);
             
             // Process the order event
             processOrderEvent(event);
             
+            // Mark event as processed (within same transaction)
+            if (event.getEventId() != null) {
+                ProcessedEvent processed = new ProcessedEvent(
+                    event.getEventId(),
+                    "ORDER_" + event.getAction(),
+                    "event-consumer-service",
+                    event.getOrderId() != null ? event.getOrderId().toString() : null
+                );
+                processedEventRepository.save(processed);
+                logger.debug("✓ Event marked as processed: {}", event.getEventId());
+            }
+            
             // Acknowledge the message
             // acknowledgment.acknowledge();
             
         } catch (Exception e) {
             logger.error("Error processing order event from topic '{}': {}", topic, e.getMessage(), e);
+            throw e; // Rethrow to trigger Kafka redelivery
         }
     }
     

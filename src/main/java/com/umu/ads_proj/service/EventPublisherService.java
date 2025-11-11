@@ -55,10 +55,17 @@ public class EventPublisherService {
     
     /**
      * Publish user-related events asynchronously (non-blocking)
+     * This method does NOT block the caller - it returns immediately
+     * Runs in async- thread pool
      */
     @Async
     public CompletableFuture<Void> publishUserEventAsync(UserEvent event) {
-        publishEvent(userEventsTopic, event.getUserId().toString(), event);
+        try {
+            logger.info("[ASYNC] Publishing user event with key '{}': {}", event.getUserId(), event.getEventType());
+            kafkaTemplate.send(userEventsTopic, event.getUserId().toString(), event);
+        } catch (Exception e) {
+            logger.error("[ASYNC] Error publishing user event: {}", e.getMessage(), e);
+        }
         return CompletableFuture.completedFuture(null);
     }
     
@@ -78,10 +85,17 @@ public class EventPublisherService {
     
     /**
      * Publish order-related events asynchronously (non-blocking)
+     * This method does NOT block the caller - it returns immediately
+     * Runs in async- thread pool
      */
     @Async
     public CompletableFuture<Void> publishOrderEventAsync(OrderEvent event) {
-        publishEvent(orderEventsTopic, event.getOrderId().toString(), event);
+        try {
+            logger.info("[ASYNC] Publishing order event with key '{}': {}", event.getOrderId(), event.getEventType());
+            kafkaTemplate.send(orderEventsTopic, event.getOrderId().toString(), event);
+        } catch (Exception e) {
+            logger.error("[ASYNC] Error publishing order event: {}", e.getMessage(), e);
+        }
         return CompletableFuture.completedFuture(null);
     }
     
@@ -94,10 +108,17 @@ public class EventPublisherService {
     
     /**
      * Publish payment-related events asynchronously (non-blocking)
+     * This method does NOT block the caller - it returns immediately
+     * Runs in async- thread pool
      */
     @Async
     public CompletableFuture<Void> publishPaymentEventAsync(PaymentEvent event) {
-        publishEvent(paymentEventsTopic, event.getPaymentId().toString(), event);
+        try {
+            logger.info("[ASYNC] Publishing payment event with key '{}': {}", event.getPaymentId(), event.getEventType());
+            kafkaTemplate.send(paymentEventsTopic, event.getPaymentId().toString(), event);
+        } catch (Exception e) {
+            logger.error("[ASYNC] Error publishing payment event: {}", e.getMessage(), e);
+        }
         return CompletableFuture.completedFuture(null);
     }
     
@@ -113,6 +134,8 @@ public class EventPublisherService {
     
     /**
      * Generic method to publish any event to a specified topic
+     * WARNING: This method is SYNCHRONOUS and BLOCKS until Kafka acknowledges
+     * For async publishing, use publishEventAsync() instead
      */
     public void publishEvent(String topic, String key, BaseEvent event) {
         try {
@@ -134,6 +157,35 @@ public class EventPublisherService {
         } catch (Exception e) {
             logger.error("Error publishing event to topic '{}': {}", topic, e.getMessage(), e);
         }
+    }
+    
+    /**
+     * Generic ASYNC method to publish any event to a specified topic
+     * This method runs in the configured async thread pool and does NOT block the caller
+     * The actual Kafka send happens in a background thread from our AsyncConfig pool
+     */
+    @Async  // Uses our configured thread pool (async-)
+    public CompletableFuture<Void> publishEventAsync(String topic, String key, BaseEvent event) {
+        try {
+            logger.info("[ASYNC] Publishing event to topic '{}' with key '{}': {}", topic, key, event.getEventType());
+            
+            // Fire and forget - we don't wait for Kafka acknowledgment
+            kafkaTemplate.send(topic, key, event)
+                .whenComplete((result, ex) -> {
+                    if (ex == null) {
+                        logger.info("[ASYNC] Event published successfully: {} to topic '{}' with offset {}",
+                                   event.getEventId(), topic, result.getRecordMetadata().offset());
+                    } else {
+                        logger.error("[ASYNC] Failed to publish event: {} to topic '{}'", 
+                                   event.getEventId(), topic, ex);
+                    }
+                });
+            
+        } catch (Exception e) {
+            logger.error("[ASYNC] Error publishing event to topic '{}': {}", topic, e.getMessage(), e);
+        }
+        
+        return CompletableFuture.completedFuture(null);
     }
     
     /**

@@ -1,0 +1,145 @@
+╔══════════════════════════════════════════════════════════╗
+║           LIVE DEMO - QUICK REFERENCE CARD               ║
+╚══════════════════════════════════════════════════════════╝
+
+🚀 QUICK START
+──────────────────────────────────────────────────────────
+./scripts/run-demo.sh
+  → Select mode 2 (Interactive) for live presentation
+
+
+📋 INDIVIDUAL SCRIPTS
+──────────────────────────────────────────────────────────
+./scripts/demo-setup.sh          # Setup (run first)
+./scripts/demo-1-users.sh        # User registration
+./scripts/demo-2-orders.sh       # Order creation
+./scripts/demo-3-notifications.sh # Notifications
+./scripts/demo-4-traffic.sh      # Traffic simulation
+./scripts/demo-5-fulfillment.sh  # Fulfillment agent
+./scripts/demo-summary.sh        # Summary report
+./scripts/demo-cleanup.sh        # Cleanup (run last)
+
+
+🖥️ TERMINAL COMMANDS (Keep these ready)
+──────────────────────────────────────────────────────────
+
+Terminal 2 - User Events:
+docker exec -it kafka kafka-console-consumer \
+  --bootstrap-server localhost:9092 \
+  --topic user-events \
+  --from-beginning \
+  --property print.timestamp=true
+
+Terminal 2 - Order Events:
+docker exec -it kafka kafka-console-consumer \
+  --bootstrap-server localhost:9092 \
+  --topic order-events \
+  --from-beginning \
+  --property print.timestamp=true
+
+Terminal 3 - Application Logs:
+tail -f app.log | grep -E 'ORDER|USER|PAYMENT|NOTIF|Fulfillment'
+
+Terminal 4 - Consumer Lag:
+watch -n 1 'docker exec kafka kafka-consumer-groups \
+  --bootstrap-server localhost:9092 \
+  --group ads-proj-group \
+  --describe | grep order-events'
+
+
+🎯 KEY FEATURES TO DEMONSTRATE
+──────────────────────────────────────────────────────────
+✓ Asynchronous event publishing (Kafka)
+✓ Event-driven workflow (PENDING → DELIVERED)
+✓ Idempotent operations (no duplicates)
+✓ Concurrent processing (10 orders simultaneously)
+✓ Fault tolerance (pause/resume agent)
+✓ Zero consumer lag (5 partitions × 5 threads)
+✓ Batch processing (50 orders per batch)
+✓ 100% success rate
+
+
+📊 EXPECTED METRICS
+──────────────────────────────────────────────────────────
+Users:               2
+Orders:              11-12
+Success Rate:        100%
+Processing Time:     10-15 seconds per order
+Consumer Lag:        0 messages
+Notifications:       5+ per order
+Event Throughput:    ~50+ events total
+
+
+🔧 EMERGENCY COMMANDS
+──────────────────────────────────────────────────────────
+
+Check application health:
+curl http://localhost:8081/actuator/health | jq
+
+Resume fulfillment (if stuck):
+curl -X POST http://localhost:8081/api/admin/resume-fulfillment
+
+Check consumer lag:
+docker exec kafka kafka-consumer-groups \
+  --bootstrap-server localhost:9092 \
+  --group ads-proj-group \
+  --describe
+
+View recent logs:
+tail -50 app.log
+
+Restart Spring Boot:
+kill $(cat app.pid)
+nohup mvn spring-boot:run > app.log 2>&1 &
+
+
+🎤 TALKING POINTS
+──────────────────────────────────────────────────────────
+Part 1: "Event-driven architecture with Kafka message broker"
+Part 2: "Automated order fulfillment workflow with state transitions"
+Part 3: "Cross-topic event consumption for notifications"
+Part 4: "Horizontal scalability through Kafka partitioning"
+Part 5: "Fault tolerance and automatic recovery"
+
+
+⏱️ TIMING
+──────────────────────────────────────────────────────────
+Total Demo:          15-20 minutes
+  Setup:             5 min
+  User Registration: 2 min
+  Order Creation:    3 min
+  Notifications:     1 min
+  Traffic:           3 min
+  Fulfillment:       2 min
+  Summary:           1 min
+  Buffer:            3-5 min
+
+
+🐛 QUICK FIXES
+──────────────────────────────────────────────────────────
+Problem: App won't start
+Fix: Check app.log, verify Docker is running
+
+Problem: Kafka events not showing
+Fix: Use --from-beginning flag, check topic exists
+
+Problem: Orders stuck in PENDING
+Fix: curl -X POST http://localhost:8081/api/admin/resume-fulfillment
+
+Problem: High consumer lag
+Fix: Wait 10-15 seconds, system is catching up
+
+
+✨ DEMO SUCCESS CRITERIA
+──────────────────────────────────────────────────────────
+✓ All services UP (PostgreSQL, Kafka, Spring Boot)
+✓ Events visible in Kafka consumers
+✓ All orders reach DELIVERED status
+✓ Zero consumer lag at end
+✓ 100% success rate
+✓ Notifications created for all events
+
+
+──────────────────────────────────────────────────────────
+Full documentation: scripts/DEMO_README.md
+──────────────────────────────────────────────────────────

@@ -71,3 +71,4 @@ config_backup_*/
 
 ### Duplicate Config ###
 /application.properties
+app.pid

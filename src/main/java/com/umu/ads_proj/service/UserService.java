@@ -117,9 +117,9 @@ public class UserService {
         User savedUser = userRepository.save(existingUser);
         logger.info("User updated successfully with ID: {}", savedUser.getId());
         
-        // Publish user update event to Kafka
+        // Publish user update event to Kafka (async)
         UserEvent userEvent = UserEvent.userUpdated(savedUser.getId(), savedUser.getName(), savedUser.getEmail());
-        eventPublisher.publishUserEvent(userEvent);
+        eventPublisher.publishUserEventAsync(userEvent);
         
         return savedUser;
     }
@@ -141,9 +141,9 @@ public class UserService {
         userRepository.deleteById(id);
         logger.info("User deleted successfully with ID: {}", id);
         
-        // Publish user deletion event to Kafka
+        // Publish user deletion event to Kafka (async)
         UserEvent userEvent = UserEvent.userDeleted(user.getId(), user.getName(), user.getEmail());
-        eventPublisher.publishUserEvent(userEvent);
+        eventPublisher.publishUserEventAsync(userEvent);
     }
     
     /**
