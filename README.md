@@ -709,6 +709,101 @@ The system implements **8 major fault tolerance mechanisms** to ensure resilienc
 | 3 | Network Partition | ~39s | ~0s | ✅ PASSED |
 | 4 | Cascading Failure (Kafka + DB) | ~67s | ~25s | ✅ PASSED |
 
+### Visual Recovery Flow
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                     FAULT INJECTION & RECOVERY TIMELINE                     │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+TEST 1: KAFKA BROKER CRASH
+════════════════════════════════════════════════════════════════════════════
+Time:  0s          2s         49s        51s        65s
+State: [HEALTHY]──[CRASH]────[DOWN]─────[RESTART]──[RECOVERED]
+       │          │          │          │          │
+       │          │          │          │          └─► Health check: ✅ PASS
+       │          │          │          └──────────► Consumer rebalance complete
+       │          │          └─────────────────────► Docker auto-restart triggered
+       │          └────────────────────────────────► Kafka broker stopped
+       └───────────────────────────────────────────► System operating normally
+
+Recovery Mechanism: Spring Kafka auto-retry (3×1s) + Consumer rebalancing
+Downtime: 49s | Recovery: 16s | Total: 65s
+
+TEST 2: POSTGRESQL FAILURE
+════════════════════════════════════════════════════════════════════════════
+Time:  0s          2s         59s        61s        69s
+State: [HEALTHY]──[CRASH]────[DOWN]─────[RESTART]──[RECOVERED]
+       │          │          │          │          │
+       │          │          │          │          └─► Queries successful ✅
+       │          │          │          └──────────► HikariCP validates connections
+       │          │          └─────────────────────► Database restarting
+       │          └────────────────────────────────► PostgreSQL stopped
+       └───────────────────────────────────────────► System operating normally
+
+Recovery Mechanism: HikariCP connection pool validation (5s timeout) + reconnect
+Downtime: 59s | Recovery: 10s | Total: 69s
+
+TEST 3: NETWORK PARTITION (Service Isolation)
+════════════════════════════════════════════════════════════════════════════
+Time:  0s          2s         39s        41s
+State: [HEALTHY]──[ISOLATE]──[PARTITION]─[RECONNECT]──[RECOVERED]
+       │          │          │          │
+       │          │          │          └─────────► All services reconnected ✅
+       │          │          └────────────────────► Services isolated (no comm)
+       │          └───────────────────────────────► Docker network disconnect
+       └──────────────────────────────────────────► System operating normally
+
+Recovery Mechanism: TCP/IP socket timeout + automatic reconnection
+Downtime: 39s | Recovery: ~0s (instant) | Total: 39s
+
+TEST 4: CASCADING FAILURE (Kafka + Database)
+════════════════════════════════════════════════════════════════════════════
+Time:  0s          2s         67s        69s        92s
+State: [HEALTHY]──[CRASH]────[DOWN]─────[RESTART]──[RECOVERED]
+       │          │          │          │          │
+       │          │          │          │          └─► All health checks: ✅ PASS
+       │          │          │          └──────────► Both services rebalancing
+       │          │          └─────────────────────► Kafka + DB both down
+       │          └────────────────────────────────► Both services stopped
+       └───────────────────────────────────────────► System operating normally
+
+Recovery Mechanism: Combined Kafka retry + HikariCP validation + Docker restart
+Downtime: 67s | Recovery: 25s | Total: 92s
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        RECOVERY COMPONENTS ACTIVATED                         │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  Component                Action Taken                    Time to Recover   │
+│  ────────────────────────────────────────────────────────────────────────   │
+│  Spring Kafka           • Auto-retry (3 attempts × 1s)         ~3-5s       │
+│                         • Consumer rebalancing                 ~10-16s      │
+│                         • Offset commit on recovery            ~1s          │
+│                                                                              │
+│  HikariCP               • Connection validation (5s timeout)   ~5s          │
+│                         • Stale connection replacement         ~3-5s        │
+│                         • Pool replenishment                   ~2-10s       │
+│                                                                              │
+│  Docker                 • Health check monitoring              ~2s          │
+│                         • Container restart policy             ~5-10s       │
+│                         • Network bridge restoration           ~1-2s        │
+│                                                                              │
+│  Application            • Health endpoint monitoring           ~1s          │
+│                         • Service discovery                    ~2-3s        │
+│                         • Event replay from Kafka              ~5-10s       │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+KEY INSIGHTS:
+✅ All failures recovered automatically (no manual intervention)
+✅ Zero data loss (idempotency prevented duplicate processing)
+✅ Kafka consumer lag recovered within seconds
+✅ Database connection pool auto-validated and replaced stale connections
+✅ Event-driven architecture prevented cascading failures to other services
+```
+
 **Recovery mechanisms demonstrated:**
 - **Spring Kafka**: Auto-retry (3 retries × 1s backoff), consumer rebalancing
 - **HikariCP**: Connection validation (5s timeout), automatic reconnection
