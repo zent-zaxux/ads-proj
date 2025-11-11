@@ -45,7 +45,9 @@ This project implements a high-performance microservices-based distributed syste
 - **📨 Event-Driven Architecture**: Apache Kafka with 4 topics for asynchronous inter-service communication
 - **⚡ True Async Implementation**: Fire-and-forget pattern with @Async + Spring Kafka for non-blocking operations
 - **🛡️ Fault Tolerance**: 8+ resilience features including idempotency, retry mechanisms, connection pooling, and health checks
-- **🤖 Autonomous Agents**: Traffic Agent (5 patterns) + Fulfillment Agent for autonomous load generation and order processing
+- **🤖 Autonomous Agents**: 
+  - **Traffic Agent**: Load generator simulating user traffic (5 patterns: STEADY, BURST, SPIKE, RAMP_UP, RANDOM)
+  - **Fulfillment Agent**: Order processor simulating fulfillment workflow (PENDING → CONFIRMED → SHIPPED → DELIVERED)
 - **🧪 Comprehensive Testing**: Autonomous stress testing, fault injection, and fulfillment accuracy validation
 - **📊 Real-time Metrics**: Comprehensive performance monitoring with Spring Actuator + Kafka event publishing
 - **⏯️ Pause/Resume**: Lag testing and backlog recovery capabilities
@@ -286,10 +288,11 @@ Complete demonstration of the Kafka-based distributed system flow:
 - 🔧 Result: Fulfillment rate now accurately shows ~100%
 
 **Recent optimizations (Oct 26, 2025):**
-- 🚀 Fulfillment Agent optimized: 100ms delay (was 2000ms) - **20x faster**
+- 🚀 Fulfillment Agent optimized: 100ms delay (was 2000ms initially) - **20x faster**
 - 🚀 Batch size increased: 50 orders (was 5) - **10x larger**
 - 🚀 Polling interval: 1s (was 5s) - **5x more frequent**
 - 🚀 Result: Fulfillment rate improved from **27.77%** to **95%+**
+- 📝 **Note**: Later further optimized to 10ms delay and batch 100 (Nov 2024)
 
 ### 3. Fault Injection Test (`fault-injection-test.sh`)
 
@@ -556,15 +559,15 @@ The system provides comprehensive performance metrics including:
 **Problem identified:** Fulfillment rate was only 27.77% due to slow processing.
 
 **Root cause:**
-- Processing delay: 2000ms per order (too slow)
-- Batch size: 5 orders (too small)
-- Polling interval: 5 seconds (too infrequent)
+- Processing delay: 2000ms per order (too slow - simulated slow external API calls)
+- Batch size: 5 orders (too small - inefficient database queries)
+- Polling interval: 5 seconds (too infrequent - orders accumulated faster than processing)
 - Backlog: 1,127 pending orders
 
-**Solution applied:**
-- ✅ Processing delay: **100ms** (20x faster)
-- ✅ Batch size: **50 orders** (10x larger)
-- ✅ Polling interval: **1 second** (5x more frequent)
+**First optimization applied (Oct 26):**
+- ✅ Processing delay: **2000ms → 100ms** (20x faster)
+- ✅ Batch size: **5 → 50 orders** (10x larger)
+- ✅ Polling interval: **5s → 1 second** (5x more frequent)
 
 **Results:**
 - 🚀 Fulfillment rate: **27.77% → 95%+** (3.4x improvement)
@@ -572,7 +575,11 @@ The system provides comprehensive performance metrics including:
 - 🚀 Average processing time: **1,962ms → 389ms** (5x faster)
 - 🚀 Backlog clearance: **Minutes instead of hours**
 
-See `explanations/FULFILLMENT_OPTIMIZATION.md` for detailed analysis.
+**Further optimization (Nov 2024):**
+- ✅ Processing delay: **100ms → 10ms** (10x faster)
+- ✅ Batch size: **50 → 100 orders** (2x larger)
+- ✅ Parallel threads: **8 → 16** (2x more parallelism)
+- 🚀 Result: Even higher throughput, approaching real-time processing
 
 ### November 11, 2024 - Async Implementation & Performance Breakthrough
 
@@ -762,6 +769,38 @@ See `docs/FAULT_TOLERANCE_REPORT.md` and `docs/FAULT_TOLERANCE_FEATURES.md` for 
    ├─ Throughput (req/sec)
    └─ Fulfillment rate (%)
 ```
+
+### Agent Roles Explained
+
+**Traffic Agent (Load Generator):**
+- **Primary Role**: Autonomous load generation and traffic simulation
+- **What it does**:
+  - Generates synthetic user traffic by making REST API calls
+  - Creates users and orders at configurable rates (1-100 ops/sec)
+  - Supports 5 traffic patterns: STEADY, BURST, SPIKE, RAMP_UP, RANDOM
+  - Runs in a separate thread pool with concurrent workers
+- **What it does NOT do**: 
+  - Does NOT monitor system metrics (that's done by Spring Actuator)
+  - Does NOT process orders (that's the Fulfillment Agent's job)
+  - Does NOT collect performance data (Kafka consumers do this)
+- **Implementation**: `TrafficAgent.java` - executes HTTP requests to create load
+- **Use cases**: 
+  - Stress testing
+  - Simulating real-world traffic patterns
+  - Load testing with varying intensities
+
+**Fulfillment Agent (Order Processor):**
+- **Primary Role**: Autonomous order fulfillment pipeline
+- **What it does**:
+  - Polls database for PENDING orders every 1 second
+  - Processes orders through workflow stages (PENDING → CONFIRMED → SHIPPED → DELIVERED)
+  - Publishes status updates to Kafka for notifications
+  - Supports pause/resume for lag testing
+- **Implementation**: `FulfillmentAgent.java` - simulates order fulfillment workflow
+- **Use cases**: 
+  - Simulating order fulfillment pipeline
+  - Testing Kafka consumer lag and recovery
+  - Demonstrating autonomous agent behavior
 
 ### Current Implementation
 
