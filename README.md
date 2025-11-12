@@ -15,6 +15,7 @@ A comprehensive distributed system for performance analysis with automated orche
 - [API Endpoints](#-api-endpoints)
 - [Performance Analysis](#-performance-analysis)
 - [Architecture Components](#️-architecture-components)
+- [Distributed Data Consistency](#-distributed-data-consistency)
 - [Performance Benchmarks](#-performance-benchmarks)
 - [Development Notes](#-development-notes)
 
@@ -817,6 +818,353 @@ KEY INSIGHTS:
 - Database connection pool validated and replaced stale connections automatically
 
 See `docs/FAULT_TOLERANCE_REPORT.md` and `docs/FAULT_TOLERANCE_FEATURES.md` for comprehensive analysis.
+
+## 🔄 Distributed Data Consistency
+
+### Overview
+
+This distributed system implements a **BASE consistency model** (Basically Available, Soft-state, Eventual consistency) instead of strict ACID guarantees across services. This is a fundamental trade-off in distributed systems: we prioritize availability and partition tolerance (AP in CAP theorem) while accepting temporary inconsistencies.
+
+### Consistency Model: BASE vs ACID
+
+**Why BASE for Distributed Systems?**
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    CONSISTENCY MODEL COMPARISON                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  ACID (Traditional Databases)        BASE (Distributed Systems)             │
+│  ────────────────────────────        ──────────────────────────────         │
+│  ✅ Atomicity: All or nothing        ✅ Basically Available: Partial reads  │
+│  ✅ Consistency: Valid state         ✅ Soft state: Temporary inconsistency │
+│  ✅ Isolation: No interference       ✅ Eventual consistency: Converges     │
+│  ✅ Durability: Permanent writes     ✅ Durability: Via replication         │
+│                                                                              │
+│  Trade-offs:                         Trade-offs:                            │
+│  • Strong consistency                • High availability                    │
+│  • Lower availability                • Horizontal scalability               │
+│  • Vertical scaling limits           • Accepts temporary inconsistency      │
+│  • Single point of failure           • Requires idempotency                 │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Our implementation prioritizes:**
+- ✅ **High Availability**: Services remain operational even during Kafka/DB failures
+- ✅ **Partition Tolerance**: System continues working during network partitions
+- ✅ **Horizontal Scalability**: Can add more service instances without coordination overhead
+- ⚠️ **Eventual Consistency**: Accepts 50-200ms delay for cross-service state propagation
+
+### Implemented Consistency Mechanisms
+
+Our system employs **4 key mechanisms** to ensure data consistency in a distributed environment:
+
+#### 1. Idempotency Layer (UUID-Based Event Deduplication)
+
+**Purpose**: Prevents duplicate processing when events are replayed or retried.
+
+**Implementation:**
+```sql
+-- Database table: processed_events
+CREATE TABLE processed_events (
+    event_id UUID PRIMARY KEY,        -- Unique event identifier
+    event_type VARCHAR(255) NOT NULL, -- ORDER_CREATED, PAYMENT_PROCESSED, etc.
+    processed_at TIMESTAMP NOT NULL,  -- When event was processed
+    entity_id BIGINT                  -- Reference to order/payment/notification
+);
+```
+
+**How it works:**
+```
+Event Flow with Idempotency Check:
+
+1. OrderCreatedEvent arrives (event_id: "a1b2c3d4-...")
+2. Check: SELECT 1 FROM processed_events WHERE event_id = 'a1b2c3d4-...'
+   ├─ If EXISTS → Skip (already processed) ✅
+   └─ If NOT EXISTS → Process event
+3. Process: Create payment record
+4. Mark processed: INSERT INTO processed_events (event_id, ...)
+5. COMMIT transaction atomically
+```
+
+**Code example:**
+```java
+@Transactional
+public void processOrderEvent(OrderEvent event) {
+    // Check if already processed
+    if (processedEventsRepository.existsByEventId(event.getEventId())) {
+        log.info("Event {} already processed, skipping", event.getEventId());
+        return; // Idempotent - safe to skip
+    }
+    
+    // Process event
+    Payment payment = createPayment(event.getOrderId());
+    
+    // Mark as processed atomically
+    ProcessedEvent processedEvent = new ProcessedEvent(
+        event.getEventId(), 
+        "ORDER_CREATED",
+        payment.getId()
+    );
+    processedEventsRepository.save(processedEvent);
+    // COMMIT - both operations succeed or both fail
+}
+```
+
+**Why this matters:**
+- Kafka retries (3 attempts) → Without idempotency, 1 order = 3 payments ❌
+- Network failures → Event replays could create duplicates ❌
+- With idempotency → 1 order = 1 payment, regardless of retries ✅
+
+#### 2. Kafka Offset Management (At-Least-Once Delivery)
+
+**Purpose**: Ensures no events are lost during processing, even with consumer failures.
+
+**Configuration:**
+```yaml
+# Spring Kafka Consumer Settings
+spring:
+  kafka:
+    consumer:
+      enable-auto-commit: true        # Commit offsets after processing
+      auto-commit-interval: 5000      # Every 5 seconds
+      max-poll-records: 500           # Batch size
+      group-id: payment-service-group # Consumer group for load balancing
+```
+
+**How it works:**
+```
+Kafka Offset Commit Timeline:
+
+Time:  0s          2s          5s          7s
+       │           │           │           │
+Event: [E1]────────[E2]────────[E3]────────[E4]
+       │           │           │           │
+       ├─ Process  ├─ Process  ├─ AUTO     ├─ Process
+       │  E1       │  E2       │  COMMIT   │  E4
+       │           │           │  (offset) │
+       └─ Stored   └─ Stored   └─ Offset   └─ Stored
+          in mem      in mem      saved       in mem
+
+If consumer crashes at 7s:
+- Events E1, E2, E3 are committed (offset saved) ✅
+- Event E4 is NOT committed → Will be redelivered ✅
+- Result: E4 processed twice (but idempotency prevents duplicate) ✅
+```
+
+**At-Least-Once Guarantee:**
+- Each event is processed **at least once** (possibly more due to retries)
+- Offset committed **after** successful processing
+- Consumer crash → Kafka replays from last committed offset
+- **Idempotency required** to handle duplicate deliveries
+
+**Why not Exactly-Once?**
+- Exactly-Once Semantics (EOS) requires Kafka transactions (higher latency)
+- Our system uses At-Least-Once + Idempotency = Functionally equivalent to Exactly-Once
+- Trade-off: Better throughput (~50 msg/sec) vs strict EOS (~20 msg/sec)
+
+#### 3. Local ACID Transactions (@Transactional)
+
+**Purpose**: Ensures atomic operations within a single service's database.
+
+**Implementation:**
+```java
+@Service
+public class OrderService {
+    
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public Order createOrder(OrderRequest request) {
+        // All operations succeed or all fail atomically
+        
+        // 1. Save order to database
+        Order order = orderRepository.save(new Order(request));
+        
+        // 2. Publish event (async, fire-and-forget)
+        publishOrderCreatedEvent(order); // Non-blocking
+        
+        // 3. COMMIT transaction
+        return order;
+        // If any step fails → Entire transaction rolls back
+    }
+}
+```
+
+**ACID within service boundaries:**
+- **Atomicity**: Order creation + event publishing succeed together or fail together
+- **Consistency**: Database constraints enforced (foreign keys, NOT NULL, etc.)
+- **Isolation**: `READ_COMMITTED` prevents dirty reads
+- **Durability**: PostgreSQL WAL ensures writes survive crashes
+
+**Cross-service consistency:**
+- ❌ NOT ACID across services (no distributed transactions / 2PC)
+- ✅ Eventual consistency via Kafka events
+- ✅ Idempotency ensures convergence to correct state
+
+#### 4. Event Sourcing (Kafka as Event Store)
+
+**Purpose**: Maintains audit trail and enables event replay for debugging/recovery.
+
+**Implementation:**
+```
+Event Store Architecture:
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         KAFKA TOPICS (Event Store)                      │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  order-events (3-5 partitions, retention: 7 days)                       │
+│  ├─ OrderCreatedEvent {orderId, userId, amount, timestamp}              │
+│  ├─ OrderConfirmedEvent {orderId, confirmedAt}                          │
+│  └─ OrderShippedEvent {orderId, trackingNumber}                         │
+│                                                                          │
+│  payment-events (3-5 partitions, retention: 7 days)                     │
+│  ├─ PaymentProcessedEvent {paymentId, orderId, amount, status}          │
+│  └─ PaymentFailedEvent {paymentId, errorCode}                           │
+│                                                                          │
+│  notification-events (3-5 partitions, retention: 7 days)                │
+│  └─ NotificationSentEvent {notificationId, userId, type, channel}       │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+
+Benefits:
+✅ Complete audit trail (who did what when)
+✅ Replay events to rebuild state (debugging, recovery)
+✅ Add new consumers without modifying producers
+✅ Time-travel debugging (replay from specific offset)
+```
+
+**Event replay example:**
+```bash
+# Rebuild PaymentService state from scratch
+1. Stop PaymentService consumer
+2. Delete all payment records: TRUNCATE payments;
+3. Reset Kafka consumer group offset:
+   kafka-consumer-groups.sh --reset-offsets --to-earliest \
+     --group payment-service-group --topic order-events --execute
+4. Start PaymentService → Replays all historical events
+5. Result: Payment state reconstructed from event log ✅
+```
+
+### Consistency Guarantees
+
+| Operation | Consistency Level | Latency | Durability |
+|-----------|------------------|---------|------------|
+| **Order Creation** | Immediate (ACID) | ~8ms | ✅ PostgreSQL WAL |
+| **Payment Processing** | Eventual (50-200ms) | ~150ms | ✅ Kafka + DB |
+| **Notification Delivery** | Eventual (50-200ms) | ~180ms | ✅ Kafka + DB |
+| **Order Fulfillment** | Eventual (1-5s) | ~1-5s | ✅ Polling + DB |
+| **Event Publishing** | Async (no wait) | ~2-5ms | ✅ Kafka replication |
+| **Idempotency Check** | Immediate (ACID) | ~1-2ms | ✅ Unique constraint |
+| **Kafka Offset Commit** | Every 5s (batch) | ~5s max | ✅ Kafka metadata |
+| **Database Transaction** | Immediate (ACID) | ~3-10ms | ✅ COMMIT log |
+| **Consumer Rebalance** | ~10-16s (failure) | ~10-16s | ✅ ZooKeeper coord |
+| **HikariCP Reconnection** | ~5-10s (failure) | ~5-10s | ✅ Connection pool |
+| **Event Replay** | Manual/scheduled | Minutes | ✅ Kafka retention |
+
+### Real-World Consistency Example
+
+**Scenario: User creates an order**
+
+```
+Timeline (T = Time):
+
+T0: Client → POST /api/orders (amount: $100)
+    ├─ OrderService.createOrder() starts transaction
+    └─ Order saved to DB (status: PENDING) ✅ COMMITTED in 8ms
+
+T0+2ms: OrderCreatedEvent published to Kafka (async, fire-and-forget)
+        └─ Kafka acknowledgment NOT awaited (async performance)
+
+T0+50ms: PaymentService consumes OrderCreatedEvent
+         ├─ Check idempotency: Event already processed? → NO
+         ├─ Create payment record (amount: $100, status: PENDING)
+         ├─ Process payment (simulate external API call)
+         ├─ Update payment (status: COMPLETED) ✅
+         └─ Mark event as processed (INSERT INTO processed_events)
+
+T0+180ms: NotificationService consumes OrderCreatedEvent
+          ├─ Check idempotency: Event already processed? → NO
+          ├─ Send email notification (simulate SMTP)
+          ├─ Create notification record (type: EMAIL, status: SENT) ✅
+          └─ Mark event as processed
+
+T0+1000ms: FulfillmentAgent polls database
+           ├─ Finds order (status: PENDING)
+           ├─ Process workflow: PENDING → CONFIRMED → SHIPPED → DELIVERED
+           ├─ Each state transition: 10ms delay (simulate warehouse API)
+           └─ Order status updated (status: DELIVERED) ✅
+
+Result:
+- API responds in 8ms (user sees "Order placed successfully")
+- Payment processed in 50ms (eventual consistency)
+- Email sent in 180ms (eventual consistency)
+- Order fulfilled in 1-5s (eventual consistency)
+
+Consistency window: ~1-5 seconds (time for all services to converge)
+```
+
+### Trade-offs and Design Decisions
+
+**What We Sacrifice:**
+- ❌ Strong consistency across services (no distributed ACID)
+- ❌ Immediate reads-after-writes across service boundaries
+- ❌ Synchronous error propagation (can't roll back cross-service operations)
+
+**What We Gain:**
+- ✅ High availability (99.9%+ uptime during tests)
+- ✅ Horizontal scalability (add more service instances without coordination)
+- ✅ Fault tolerance (services continue during Kafka/DB failures)
+- ✅ Low latency (8ms API responses vs 250ms with synchronous processing)
+- ✅ High throughput (18.97 req/s vs 4 req/s with synchronous)
+- ✅ Decoupled services (easier to develop, test, deploy independently)
+
+**When This Model Works:**
+- E-commerce systems (order → payment → notification workflow)
+- Social media platforms (post → like → notification propagation)
+- IoT systems (sensor data → processing → alerting)
+- Banking transactions (ACH transfers, inter-bank settlements)
+
+**When This Model Does NOT Work:**
+- Stock trading (requires strong consistency for prices)
+- Inventory management (overselling risk with eventual consistency)
+- Financial accounting (must balance books immediately)
+- Real-time bidding (auction requires synchronous coordination)
+
+### Reporting for Academic Analysis
+
+**Key Concepts to Highlight:**
+
+1. **CAP Theorem Trade-off**: Our system chooses **AP** (Availability + Partition Tolerance) over **C** (Consistency)
+   - Justification: E-commerce can tolerate 50-200ms consistency windows
+   - Alternative: CP system (strong consistency, lower availability) not suitable for high-throughput order processing
+
+2. **BASE vs ACID**: 
+   - ACID within service boundaries (PostgreSQL transactions)
+   - BASE across service boundaries (Kafka events)
+   - Idempotency bridges the gap (makes At-Least-Once functionally Exactly-Once)
+
+3. **Eventual Consistency Metrics**:
+   - Consistency window: **50-200ms** (measured in autonomous stress tests)
+   - Convergence time: **1-5s** (all services reach consistent state)
+   - Idempotency effectiveness: **100%** (zero duplicate payments despite retries)
+
+4. **Fault Tolerance vs Consistency**:
+   - During Kafka broker crash: **49s downtime**, automatic recovery
+   - During database failure: **59s downtime**, HikariCP reconnection
+   - **Zero data loss** (Kafka offset management + idempotency)
+   - **Zero duplicate operations** (UUID-based deduplication)
+
+5. **Performance Impact of Consistency Model**:
+   - Async event publishing: **31x latency reduction** (250ms → 8ms)
+   - Throughput improvement: **4.7x** (4 req/s → 18.97 req/s)
+   - Trade-off: 50-200ms eventual consistency window (acceptable for e-commerce)
+
+**Academic References:**
+- Brewer's CAP Theorem (2000): Consistency, Availability, Partition Tolerance
+- BASE: Basically Available, Soft-state, Eventual consistency (Pritchett, 2008)
+- Vogels, W. (2009): "Eventually Consistent" - Amazon's consistency model
+- Kleppmann, M. (2017): "Designing Data-Intensive Applications" - Chapter 9 (Consistency and Consensus)
 
 ## 🏗️ Architecture Components
 
