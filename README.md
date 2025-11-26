@@ -23,14 +23,14 @@ A comprehensive distributed system for performance analysis with automated orche
 
 | **Task** | **Command** | **Description** |
 |----------|-------------|-----------------|
-| **Start Services** | `docker-compose up -d` | Start Kafka, Zookeeper, PostgreSQL |
+| **Start Services** | `docker-compose -f deployment/compose.yaml up -d` | Start Kafka, Zookeeper, PostgreSQL |
 | **Run Application** | `./mvnw spring-boot:run` | Start Spring Boot application |
-| **E2E Demo** | `./e2e-demo.sh` | Complete system demonstration |
-| **Autonomous Test** | `./autonomous-stress-test.sh` | 5-round stress test with accurate metrics |
-| **Fault Injection Test** | `./fault-injection-test.sh` | Systematic fault tolerance testing (Kafka crash, DB failure, network partition) |
-| **Fulfillment Accuracy Test** | `./test-fulfillment-accuracy.sh` | Quick validation of fulfillment rate accuracy |
-| **Concurrent Test** | `./stress-test-concurrent.sh` | Multi-round concurrent load test |
-| **Clear Database** | `./clear-database.sh` | Truncate all tables |
+| **E2E Demo** | `./testing/scripts/e2e-demo.sh` | Complete system demonstration |
+| **Autonomous Test** | `./testing/scripts/autonomous-stress-test.sh` | 5-round stress test with accurate metrics |
+| **Fault Injection Test** | `./testing/scripts/fault-injection-test.sh` | Systematic fault tolerance testing (Kafka crash, DB failure, network partition) |
+| **Fulfillment Accuracy Test** | `./testing/scripts/test-fulfillment-accuracy.sh` | Quick validation of fulfillment rate accuracy |
+| **Concurrent Test** | `./testing/scripts/stress-test-concurrent.sh` | Multi-round concurrent load test |
+| **Clear Database** | `./scripts/clear-database.sh` | Truncate all tables |
 | **Start Traffic Agent** | `curl -X POST "http://localhost:8081/api/agent/traffic/start?opsPerSecond=10&pattern=STEADY"` | Generate autonomous load |
 | **Start Fulfillment Agent** | `curl -X POST "http://localhost:8081/api/agent/fulfillment/start?processingDelayMs=100&batchSize=50&pollingIntervalSeconds=1"` | Process orders autonomously |
 | **Check Status** | `curl http://localhost:8081/actuator/health` | Application health check |
@@ -42,8 +42,8 @@ This project implements a high-performance microservices-based distributed syste
 
 ### 🎯 Key Features
 
-- **🏗️ Microservices Architecture**: 4 independent services (User, Order, Payment, Notification) with REST API communication
-- **📨 Event-Driven Architecture**: Apache Kafka with 4 topics for asynchronous inter-service communication
+- **🏗️ Monolithic Spring Boot Architecture**: Single application with 4 modular service layers (User, Order, Payment, Notification) communicating via in-process calls and Kafka events
+- **📨 Event-Driven Architecture**: Apache Kafka with 5 topics (order-events, payment-events, notification-events, user-events, performance-events) for asynchronous inter-service communication
 - **⚡ True Async Implementation**: Fire-and-forget pattern with @Async + Spring Kafka for non-blocking operations
 - **🛡️ Fault Tolerance**: 8+ resilience features including idempotency, retry mechanisms, connection pooling, and health checks
 - **🤖 Autonomous Agents**: 
@@ -68,7 +68,7 @@ This project implements a high-performance microservices-based distributed syste
 
 ```
 ads-proj/
-├── src/
+├── src/                             # Source Code
 │   ├── main/
 │   │   ├── java/com/umu/ads_proj/
 │   │   │   ├── controller/          # REST API Controllers
@@ -107,45 +107,72 @@ ads-proj/
 │   │       └── application.properties
 │   └── test/                        # Test Suite
 │
-├── explanations/                    # Documentation
-│   ├── FULFILLMENT_OPTIMIZATION.md # Performance tuning guide
-│   ├── COMPLETE_TESTING_GUIDE.md   # Testing documentation
-│   ├── KAFKA_CURRENT_IMPLEMENTATION.md
-│   └── ... (other guides)
+├── documentation/                   # Project Documentation
+│   ├── reports/                     # Performance & Analysis Reports
+│   │   ├── FAULT_TOLERANCE_REPORT.md
+│   │   ├── FINAL_PERFORMANCE_ASSESSMENT.md
+│   │   ├── KAFKA_PERFORMANCE_REPORT.md
+│   │   ├── PERFORMANCE_TEST_SUMMARY.md
+│   │   └── TECHNICAL_CHALLENGES.md
+│   └── guides/                      # Setup & Usage Guides
+│       ├── ARCHITECTURE_DIAGRAM.md
+│       ├── KAFKA_UI_GUIDE.md
+│       └── PERFORMANCE_COMPARISON_GUIDE.md
 │
-├── docs/                            # Technical Documentation
-│   ├── ASYNC_AND_IDEMPOTENCY_GUIDE.md     # Async + idempotency implementation
-│   ├── ASYNC_IMPLEMENTATION_SUMMARY.md    # Async performance analysis
-│   ├── TRUE_ASYNC_IMPLEMENTATION.md       # True async deep dive
-│   ├── IDEMPOTENCY_IMPLEMENTATION.md      # Idempotency features
-│   ├── FAULT_TOLERANCE_FEATURES.md        # Fault tolerance analysis
-│   └── FAULT_TOLERANCE_REPORT.md          # Fault injection test results
+├── docs/                            # Technical Implementation Docs
+│   ├── ASYNC_AND_IDEMPOTENCY_GUIDE.md
+│   ├── ASYNC_IMPLEMENTATION_SUMMARY.md
+│   ├── TRUE_ASYNC_IMPLEMENTATION.md
+│   ├── IDEMPOTENCY_IMPLEMENTATION.md
+│   ├── FAULT_TOLERANCE_FEATURES.md
+│   └── OBSERVABILITY_EXAMPLES.md
 │
-├── test-logs/                       # Test Results
-│   ├── autonomous-stress-*/         # Autonomous test outputs
-│   └── stress-test-concurrent-*/    # Concurrent test outputs
+├── explanations/                    # Detailed Explanations
+│   ├── FULFILLMENT_OPTIMIZATION.md
+│   ├── COMPLETE_TESTING_GUIDE.md
+│   ├── TRAFFIC_AGENT_GUIDE.md
+│   └── FULFILLMENT_AGENT_GUIDE.md
+│
+├── testing/                         # Testing Infrastructure
+│   ├── scripts/                     # Test Scripts
+│   │   ├── autonomous-stress-test.sh
+│   │   ├── e2e-demo.sh
+│   │   ├── fault-injection-test.sh
+│   │   ├── observability-demo.sh
+│   │   ├── setup-and-run-demo.sh
+│   │   ├── stress-test-concurrent.sh
+│   │   ├── test-async-performance.sh
+│   │   ├── test-fulfillment-accuracy.sh
+│   │   └── test-idempotency.sh
+│   ├── analysis/                    # Analysis Tools
+│   │   ├── analyze-kafka-results.py
+│   │   ├── analyze-results.py
+│   │   ├── combined_results.csv
+│   │   ├── performance_analysis.txt
+│   │   └── performance_comparison_100vs400.txt
+│   └── logs/                        # Test Execution Logs
+│       ├── autonomous-stress-*/
+│       ├── fault-injection-*/
+│       └── stress-test-concurrent-*/
+│
+├── deployment/                      # Deployment Configuration
+│   ├── compose.yaml                 # Main Docker Compose
+│   ├── docker-compose-scale.yaml    # Scaling configuration
+│   ├── Dockerfile                   # Application container
+│   └── nginx.conf                   # Load balancer config
+│
+├── configuration/                   # Database & Config Files
+│   └── preload-orders.sql           # Sample data
 │
 ├── scripts/                         # Utility Scripts
+│   ├── demo-*.sh                    # Demo scripts
+│   └── DEMO_README.md
 │
-├── Testing Scripts (Main)
-├── autonomous-stress-test.sh        # 5-round autonomous stress test (accurate metrics)
-├── fault-injection-test.sh          # Fault tolerance testing (Kafka, DB, network)
-├── test-fulfillment-accuracy.sh     # Fulfillment rate accuracy validation
-├── stress-test-concurrent.sh        # Multi-round concurrent test
-├── e2e-demo.sh                      # End-to-end Kafka demo
-├── clear-database.sh                # Database cleanup
+├── logs/                            # Application Logs (gitignored)
+│   └── app*.log
 │
-├── Docker & Deployment
-├── compose.yaml                     # Main Docker Compose
-├── docker-compose-scale.yaml        # Scaling configuration
-├── Dockerfile                       # Application container
-├── nginx.conf                       # Load balancer config
-│
-├── Configuration
-├── application.properties           # Application config
-├── pom.xml                         # Maven dependencies
-├── mvnw / mvnw.cmd                 # Maven wrapper
-│
+├── pom.xml                          # Maven dependencies
+├── mvnw / mvnw.cmd                  # Maven wrapper
 └── README.md                        # This file
 ```
 
@@ -168,10 +195,10 @@ cd ads-proj
 
 ```bash
 # Start Kafka, Zookeeper, PostgreSQL, Kafka UI
-docker-compose up -d
+docker-compose -f deployment/compose.yaml up -d
 
 # Verify services are running
-docker-compose ps
+docker-compose -f deployment/compose.yaml ps
 ```
 
 ### 3. Run the Application
@@ -224,19 +251,19 @@ The application will be available at:
 
 The project includes comprehensive testing scripts for various scenarios:
 
-### 1. End-to-End Demo (`e2e-demo.sh`)
+### 1. End-to-End Demo (`testing/scripts/e2e-demo.sh`)
 
 Complete demonstration of the Kafka-based distributed system flow:
 
 ```bash
-./e2e-demo.sh
+./testing/scripts/e2e-demo.sh
 ```
 
 **What it does:**
 - ✅ Health checks all services (User, Order, Payment, Notification)
 - ✅ Verifies Kafka infrastructure (Broker, Zookeeper, PostgreSQL)
 - ✅ Creates test user and order
-- ✅ Demonstrates Kafka event flow across all microservices
+- ✅ Demonstrates Kafka event flow across all service layers
 - ✅ Shows Payment Service auto-processing via Kafka consumer
 - ✅ Shows Notification Service auto-delivery via Kafka consumer
 - ✅ Tests Traffic Agent with autonomous order generation
@@ -248,12 +275,12 @@ Complete demonstration of the Kafka-based distributed system flow:
 - Understanding event-driven flow
 - Verifying Kafka integration
 
-### 2. Autonomous Stress Test (`autonomous-stress-test.sh`)
+### 2. Autonomous Stress Test (`testing/scripts/autonomous-stress-test.sh`)
 
 5-round stress test using Traffic Agent and Fulfillment Agent with accurate metrics:
 
 ```bash
-./autonomous-stress-test.sh
+./testing/scripts/autonomous-stress-test.sh
 ```
 
 **Configuration:**
@@ -279,7 +306,7 @@ Complete demonstration of the Kafka-based distributed system flow:
 - Fulfillment rate (%)
 
 **Output:**
-- CSV file: `test-logs/autonomous-stress-TIMESTAMP/autonomous_stress_results.csv`
+- CSV file: `testing/logs/autonomous-stress-TIMESTAMP/autonomous_stress_results.csv`
 - Individual logs per test
 - Aggregated statistics by load level and pattern
 
@@ -296,12 +323,12 @@ Complete demonstration of the Kafka-based distributed system flow:
 - 🚀 Result: Fulfillment rate improved from **27.77%** to **95%+** through better resource utilization
 - 📝 **Note**: Later further optimized to 10ms delay and batch 100 (Nov 2024)
 
-### 3. Fault Injection Test (`fault-injection-test.sh`)
+### 3. Fault Injection Test (`testing/scripts/fault-injection-test.sh`)
 
 Systematic testing of distributed system fault tolerance:
 
 ```bash
-./fault-injection-test.sh
+./testing/scripts/fault-injection-test.sh
 ```
 
 **Configuration:**
@@ -331,8 +358,8 @@ Systematic testing of distributed system fault tolerance:
 - Health check results
 
 **Output:**
-- Summary file: `test-logs/fault-injection-TIMESTAMP/fault_injection_summary.csv`
-- Detailed logs: `test-logs/fault-injection-TIMESTAMP/fault_injection_results.txt`
+- Summary file: `testing/logs/fault-injection-TIMESTAMP/fault_injection_summary.csv`
+- Detailed logs: `testing/logs/fault-injection-TIMESTAMP/fault_injection_results.txt`
 
 **Recent fixes (Nov 11, 2024):**
 - 🔧 Fixed timing issues: Added `sleep 2` after docker stop, `sleep 5` before health checks
@@ -345,12 +372,12 @@ Systematic testing of distributed system fault tolerance:
 - ✅ Test 3 (Network Partition): ~39s partition, ~0s recovery
 - ✅ Test 4 (Cascading Failure): ~67s downtime, ~25s recovery
 
-### 4. Fulfillment Accuracy Test (`test-fulfillment-accuracy.sh`)
+### 4. Fulfillment Accuracy Test (`testing/scripts/test-fulfillment-accuracy.sh`)
 
 Quick validation test for accurate fulfillment metrics:
 
 ```bash
-./test-fulfillment-accuracy.sh
+./testing/scripts/test-fulfillment-accuracy.sh
 ```
 
 **Configuration:**
@@ -370,12 +397,12 @@ Quick validation test for accurate fulfillment metrics:
 
 **Created on:** Nov 11, 2024 (to validate fulfillment rate fix)
 
-### 5. Concurrent Stress Test (`stress-test-concurrent.sh`)
+### 5. Concurrent Stress Test (`testing/scripts/stress-test-concurrent.sh`)
 
 Multi-round concurrent user simulation with shell workers:
 
 ```bash
-./stress-test-concurrent.sh
+./testing/scripts/stress-test-concurrent.sh
 ```
 
 **Configuration:**
@@ -400,7 +427,7 @@ Multi-round concurrent user simulation with shell workers:
 - Throughput (requests/sec)
 
 **Output:**
-- CSV file: `test-logs/stress-test-concurrent-TIMESTAMP/concurrent_stress_test_results.csv`
+- CSV file: `testing/logs/stress-test-concurrent-TIMESTAMP/concurrent_stress_test_results.csv`
 - Individual logs and latency data per test
 - Aggregated statistics by load level
 
@@ -513,15 +540,15 @@ All test scripts generate:
 **Example analysis commands:**
 ```bash
 # View latest autonomous test results
-cat test-logs/autonomous-stress-*/autonomous_stress_results.csv | column -t -s,
+cat testing/logs/autonomous-stress-*/autonomous_stress_results.csv | column -t -s,
 
 # Calculate average fulfillment rate
 awk -F',' 'NR>1 {sum+=$14; count++} END {print "Avg Fulfillment Rate:", sum/count"%"}' \
-  test-logs/autonomous-stress-*/autonomous_stress_results.csv
+  testing/logs/autonomous-stress-*/autonomous_stress_results.csv
 
 # Find P95 latency by load level
 awk -F',' 'NR>1 {load[$3]+=$11; count[$3]++} END {for(l in load) print "Load "l":", load[l]/count[l]"ms"}' \
-  test-logs/autonomous-stress-*/autonomous_stress_results.csv
+  testing/logs/autonomous-stress-*/autonomous_stress_results.csv
 ```
 
 ## 📊 Performance Analysis
@@ -1175,41 +1202,50 @@ Consistency window: ~1-5 seconds (time for all services to converge)
 │                      CLIENT / TESTING SCRIPTS                    │
 │  (e2e-demo.sh, autonomous-stress-test.sh, curl commands)        │
 └────────────────────────┬────────────────────────────────────────┘
-                         │ REST API
+                         │ REST API (Port 8081)
                          ▼
-         ┌───────────────┼───────────────┬────────────────┐
-         ▼               ▼               ▼                ▼
-┌────────────────┐ ┌────────────┐ ┌────────────┐ ┌──────────────┐
-│  USER SERVICE  │ │   ORDER    │ │  PAYMENT   │ │ NOTIFICATION │
-│                │ │  SERVICE   │ │  SERVICE   │ │   SERVICE    │
-│  - CRUD Users  │ │  - Orders  │ │  - Process │ │  - Email/SMS │
-│  - REST API    │ │  - Publish │ │  - Consume │ │  - Consume   │
-└────────┬───────┘ └─────┬──────┘ └─────┬──────┘ └──────┬───────┘
-         │               │               │                │
-         │          PUBLISHES       CONSUMES         CONSUMES
-         │               │               │                │
-         ▼               ▼               ▼                ▼
+┌─────────────────────────────────────────────────────────────────┐
+│           MONOLITHIC SPRING BOOT APPLICATION                     │
+│                                                                  │
+│  ┌────────────────────  SERVICE LAYER  ───────────────────┐    │
+│  │                                                          │    │
+│  │  UserService    OrderService    PaymentService          │    │
+│  │  NotificationService    EventPublisherService           │    │
+│  │  EventConsumerService   NotificationConsumer            │    │
+│  │                                                          │    │
+│  │  - In-process calls between services                    │    │
+│  │  - @Async event publishing to Kafka                     │    │
+│  │  - @KafkaListener for consuming events                  │    │
+│  └──────────────────────────────────────────────────────────┘    │
+│                           │                                       │
+│                      PUBLISHES &                                 │
+│                       CONSUMES                                   │
+│                           │                                       │
+└───────────────────────────┼───────────────────────────────────────┘
+                            ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                    APACHE KAFKA (9092)                          │
 │  Topics:                                                         │
-│  • order-events (3-5 partitions)                                │
-│  • payment-events (3-5 partitions)                              │
-│  • notification-events (3-5 partitions)                         │
-│  • performance-metrics (3-5 partitions)                         │
+│  • order-events (5 partitions)                                  │
+│  • payment-events (5 partitions)                                │
+│  • notification-events (5 partitions)                           │
+│  • user-events (5 partitions)                                   │
+│  • performance-events (5 partitions)                            │
 └────────────────────────┬────────────────────────────────────────┘
                          │
-         ┌───────────────┼───────────────┐
-         ▼               ▼               ▼
-┌────────────────┐ ┌────────────┐ ┌────────────────┐
-│ FULFILLMENT    │ │  TRAFFIC   │ │   ZOOKEEPER    │
-│    AGENT       │ │   AGENT    │ │   (Kafka       │
-│                │ │            │ │  Coordinator)  │
-│ - Consumes     │ │ - Generates│ │                │
-│   orders       │ │   traffic  │ │  - Maintains   │
-│ - Processes    │ │ - Publishes│ │    cluster     │
-│   workflow     │ │   orders   │ │    metadata    │
-└────────┬───────┘ └─────┬──────┘ └────────────────┘
-         │               │
+         ┌───────────────┼───────────────┬────────────────┐
+         ▼               ▼               ▼                ▼
+┌────────────────┐ ┌────────────┐ ┌────────────────┐ ┌──────────────┐
+│ FULFILLMENT    │ │  TRAFFIC   │ │   ZOOKEEPER    │ │  KAFKA UI    │
+│    AGENT       │ │   AGENT    │ │   (Kafka       │ │  (Port 8080) │
+│                │ │            │ │  Coordinator)  │ │              │
+│ - Consumes     │ │ - Generates│ │                │ │ - Monitor    │
+│   orders       │ │   traffic  │ │  - Maintains   │ │   topics     │
+│ - Processes    │ │ - Publishes│ │    cluster     │ │ - Consumer   │
+│   workflow     │ │   orders   │ │    metadata    │ │   lag        │
+└────────┬───────┘ └─────┬──────┘ └────────────────┘ │ - Message    │
+         │               │                            │   browsing   │
+         │               │                            └──────────────┘
          ▼               ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                  POSTGRESQL DATABASE (5432)                     │
@@ -1223,17 +1259,17 @@ Consistency window: ~1-5 seconds (time for all services to converge)
 **Order Creation Flow:**
 ```
 1. Client → POST /api/orders
-2. OrderService.createOrder()
+2. OrderService.createOrder() (within Spring Boot app)
    ├─ Save to PostgreSQL (status: PENDING)
-   └─ Publish OrderCreatedEvent → Kafka topic: order-events
+   └─ @Async publish OrderCreatedEvent → Kafka topic: order-events
 3. Kafka distributes to partitions (round-robin or key-based)
-4. Consumers receive event:
-   ├─ PaymentService: Creates payment record, processes payment
-   ├─ NotificationService: Sends email/SMS notification
-   └─ FulfillmentAgent: Processes order workflow (CONFIRMED → SHIPPED → DELIVERED)
-5. Each service publishes its own events:
-   ├─ PaymentService → payment-events topic
-   └─ NotificationService → notification-events topic
+4. Kafka Consumers within same Spring Boot app receive event:
+   ├─ EventConsumerService (@KafkaListener): Creates payment via PaymentService
+   ├─ NotificationConsumer (@KafkaListener): Sends email/SMS via NotificationService
+   └─ FulfillmentAgent: Polls database for orders, processes workflow
+5. Services publish their own events:
+   ├─ EventConsumerService → payment-events topic
+   └─ NotificationConsumer → notification-events topic
 6. All events stored in Kafka for replay/audit
 ```
 
@@ -1294,8 +1330,8 @@ Consistency window: ~1-5 seconds (time for all services to converge)
 
 ### Current Implementation
 
-- ✅ **4 Microservices**: User, Order, Payment, Notification services
-- ✅ **Event-Driven Architecture**: Kafka with 4 topics (order-events, payment-events, notification-events, performance-metrics)
+- ✅ **Monolithic Spring Boot Application**: Single application with 4 modular service layers (User, Order, Payment, Notification)
+- ✅ **Event-Driven Architecture**: Kafka with 5 topics (order-events, payment-events, notification-events, user-events, performance-events)
 - ✅ **True Async Processing**: @Async with fire-and-forget pattern (8ms response times)
 - ✅ **Idempotency Layer**: UUID-based event deduplication with database tracking
 - ✅ **Fault Tolerance**: 8+ resilience features (retry, connection pooling, health checks)

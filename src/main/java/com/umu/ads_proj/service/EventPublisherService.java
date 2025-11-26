@@ -16,6 +16,7 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 
 /**
  * Service for publishing events to Kafka topics
@@ -45,6 +46,9 @@ public class EventPublisherService {
     
     @Value("${app.kafka.topics.notification-events}")
     private String notificationEventsTopic;
+    
+    @Value("${app.kafka.publishing.mode:async}")
+    private String publishingMode;
     
     /**
      * Publish user-related events
@@ -87,14 +91,33 @@ public class EventPublisherService {
      * Publish order-related events asynchronously (non-blocking)
      * This method does NOT block the caller - it returns immediately
      * Runs in async- thread pool
+     * 
+     * For performance comparison testing, this method can be toggled between:
+     * - async mode: Non-blocking, returns immediately (optimized)
+     * - sync mode: Blocks waiting for Kafka ACK (baseline for comparison)
      */
     @Async
     public CompletableFuture<Void> publishOrderEventAsync(OrderEvent event) {
         try {
-            logger.info("[ASYNC] Publishing order event with key '{}': {}", event.getOrderId(), event.getEventType());
-            kafkaTemplate.send(orderEventsTopic, event.getOrderId().toString(), event);
+            if ("sync".equalsIgnoreCase(publishingMode)) {
+                // SYNCHRONOUS MODE (for performance comparison - simulates baseline)
+                logger.info("[SYNC-MODE] Publishing order event with key '{}': {} (BLOCKING)", 
+                           event.getOrderId(), event.getEventType());
+                try {
+                    // Block and wait for Kafka acknowledgment (simulates pre-optimization behavior)
+                    kafkaTemplate.send(orderEventsTopic, event.getOrderId().toString(), event).get();
+                    logger.info("[SYNC-MODE] Order event published and acknowledged: {}", event.getOrderId());
+                } catch (Exception e) {
+                    logger.error("[SYNC-MODE] Error waiting for Kafka ACK: {}", e.getMessage(), e);
+                }
+            } else {
+                // ASYNCHRONOUS MODE (optimized - default)
+                logger.info("[ASYNC] Publishing order event with key '{}': {}", 
+                           event.getOrderId(), event.getEventType());
+                kafkaTemplate.send(orderEventsTopic, event.getOrderId().toString(), event);
+            }
         } catch (Exception e) {
-            logger.error("[ASYNC] Error publishing order event: {}", e.getMessage(), e);
+            logger.error("Error publishing order event: {}", e.getMessage(), e);
         }
         return CompletableFuture.completedFuture(null);
     }
